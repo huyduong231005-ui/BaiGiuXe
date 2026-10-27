@@ -1,4 +1,1 @@
 firmware/.pio/
-firmware/src/secrets.h
-
-app/dart_defines.json
