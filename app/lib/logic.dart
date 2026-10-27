@@ -25,6 +25,10 @@ int plateDistance(String a, String b) {
 
 bool samePlate(String? a, String? b) => plateDistance(normPlate(a), normPlate(b)) <= maxPlateDiff;
 
+/// Biển [known] khớp kết quả OCR: khớp biển tốt nhất, hoặc một trong các phương án đọc khác (candidates).
+bool matchesRead(String? known, String? best, List<String> candidates) =>
+    samePlate(known, best) || candidates.any((c) => samePlate(known, c));
+
 class FeeConfig {
   const FeeConfig({required this.priceDay, required this.priceNight, required this.nightMarkMinutes});
 
@@ -75,22 +79,39 @@ class Decision {
   final int? fee;
 }
 
-Decision decideEntry({required Rec? card, required bool hasOpenSession, required int free, required String? plate}) {
+/// Độ tin cậy OCR tối thiểu để chấp nhận một lần đọc biển (dưới mức này app tự chụp lại 1 lần).
+/// ponytail: hạ xuống nếu biển thật hay bị từ chối oan; nâng lên nếu vẫn lọt biển đọc sai.
+const minPlateScore = 0.8;
+
+/// Xe chỉ được vào khi: thẻ hợp lệ, bãi còn chỗ, ĐỌC ĐƯỢC biển rõ ràng, và biển đó chưa ở trong bãi.
+/// Biển là chìa khoá đối chiếu lúc ra, nên không đọc được biển thì không cho vào.
+Decision decideEntry({
+  required Rec? card,
+  required bool hasOpenSession,
+  required int free,
+  required String? plate,
+  double score = 1,
+  List<String> candidates = const [],
+  List<String> parkedPlates = const [],
+}) {
   if (card == null) return const Decision.deny('The chua dang ky');
   if (card['active'] != true) return const Decision.deny('The bi khoa');
   if (hasOpenSession) return const Decision.deny('The dang gui xe');
   if (free <= 0) return const Decision.deny('Bai da day');
-  if (card['kind'] == 'monthly' && plate != null && !samePlate(plate, card['plate'] as String?)) {
+  if (plate == null || normPlate(plate).isEmpty) return const Decision.deny('Khong doc duoc bien');
+  if (score < minPlateScore) return const Decision.deny('Bien mo, quet lai');
+  if (parkedPlates.any((p) => samePlate(p, plate))) return const Decision.deny('Xe da o trong bai');
+  if (card['kind'] == 'monthly' && !matchesRead(card['plate'] as String?, plate, candidates)) {
     return const Decision.deny('Sai xe ve thang');
   }
-  // Không đọc được biển vẫn cho vào: ảnh đã lưu để bảo vệ đối chiếu lúc ra.
-  return Decision.allow(plate == null ? 'Khong doc duoc bien' : 'Moi vao');
+  return const Decision.allow('Moi vao');
 }
 
 Decision decideExit({
   required Rec? card,
   required Rec? session,
   required String? plateOut,
+  List<String> candidates = const [],
   required DateTime now,
   required FeeConfig cfg,
 }) {
@@ -98,7 +119,7 @@ Decision decideExit({
   if (plateOut == null) return const Decision.deny('Khong doc duoc bien');
   final plateIn = session['plate_in'] as String?;
   if (plateIn == null) return const Decision.deny('Thieu bien luc vao');
-  if (!samePlate(plateIn, plateOut)) return const Decision.deny('Sai bien so');
+  if (!matchesRead(plateIn, plateOut, candidates)) return const Decision.deny('Sai bien so');
   final fee = feeFor(session, card, now, cfg);
   return Decision.allow('Phi: ${fee}d', open: true, fee: fee);
 }

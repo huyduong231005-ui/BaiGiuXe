@@ -147,24 +147,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
               ? const Center(child: CircularProgressIndicator())
               : Stack(fit: StackFit.expand, children: [
                   Center(child: CameraPreview(cam!)),
-                  // Khung ngắm: lấy nét + đo sáng đúng vào vùng giữa này.
-                  Center(
-                    child: FractionallySizedBox(
-                      widthFactor: 0.6,
-                      heightFactor: 0.22,
-                      child: DecoratedBox(
-                        decoration: BoxDecoration(
-                          border: Border.all(color: Colors.greenAccent, width: 3),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: const Align(
-                          alignment: Alignment.topCenter,
-                          child: Text('Đặt biển số vào khung',
-                              style: TextStyle(color: Colors.greenAccent, backgroundColor: Colors.black54)),
-                        ),
-                      ),
-                    ),
-                  ),
                   Align(alignment: Alignment.topCenter, child: _Banner(station!.status)),
                   Align(
                     alignment: Alignment.bottomCenter,

@@ -63,8 +63,34 @@ void main() {
     test('bãi đầy bị từ chối', () {
       expect(decideEntry(card: guest, hasOpenSession: false, free: 0, plate: 'X').ok, isFalse);
     });
-    test('OCR không đọc được vẫn cho vào', () {
-      expect(decideEntry(card: guest, hasOpenSession: false, free: 1, plate: null).ok, isTrue);
+    test('không đọc được biển -> KHÔNG cho vào', () {
+      final d = decideEntry(card: guest, hasOpenSession: false, free: 1, plate: null);
+      expect(d.ok, isFalse);
+      expect(d.message, 'Khong doc duoc bien');
+    });
+    test('đọc được nhưng độ tin cậy thấp -> KHÔNG cho vào', () {
+      final d = decideEntry(card: guest, hasOpenSession: false, free: 1, plate: '29Y303658', score: 0.5);
+      expect(d.ok, isFalse);
+    });
+    test('biển đã ở trong bãi (kể cả đọc lệch 1 ký tự) -> KHÔNG cho vào', () {
+      final d = decideEntry(
+          card: guest, hasOpenSession: false, free: 1, plate: '29M303658', parkedPlates: ['30A111111', '29Y303658']);
+      expect(d.ok, isFalse);
+      expect(d.message, 'Xe da o trong bai');
+    });
+    test('biển rõ, chưa có trong bãi -> cho vào', () {
+      final d = decideEntry(
+          card: guest, hasOpenSession: false, free: 1, plate: '29Y303658', score: 0.99, parkedPlates: ['30A111111']);
+      expect(d.ok, isTrue);
+    });
+    test('mọi thông báo từ chối vừa 1 dòng OLED (21 ký tự)', () {
+      for (final d in [
+        decideEntry(card: guest, hasOpenSession: false, free: 1, plate: null),
+        decideEntry(card: guest, hasOpenSession: false, free: 1, plate: 'X', score: 0.1),
+        decideEntry(card: guest, hasOpenSession: false, free: 1, plate: 'X', parkedPlates: ['X']),
+      ]) {
+        expect(d.message.length, lessThanOrEqualTo(21));
+      }
     });
     test('vé tháng sai xe bị từ chối, đúng xe thì cho vào', () {
       expect(decideEntry(card: monthly, hasOpenSession: false, free: 1, plate: '59X199999').ok, isFalse);
@@ -92,6 +118,18 @@ void main() {
     });
     test('lệch biển bị từ chối', () {
       expect(decideExit(card: guest, session: session, plateOut: '59X199999', now: now, cfg: cfg).ok, isFalse);
+    });
+    test('biển tốt nhất sai nhưng có trong candidates -> vẫn cho ra', () {
+      final d = decideExit(
+          card: guest, session: session, plateOut: '29M303653', candidates: ['29M303653', '59X112345'],
+          now: now, cfg: cfg);
+      expect(d.ok, isTrue);
+    });
+    test('candidates toàn biển khác -> từ chối', () {
+      final d = decideExit(
+          card: guest, session: session, plateOut: '30A999999', candidates: ['30A999999', '30A999998'],
+          now: now, cfg: cfg);
+      expect(d.ok, isFalse);
     });
     test('khớp biển -> mở cổng và tính phí', () {
       final d = decideExit(card: guest, session: session, plateOut: '59-x1 123.45', now: now, cfg: cfg);

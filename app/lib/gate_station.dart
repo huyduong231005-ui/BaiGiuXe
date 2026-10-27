@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:ui' show Offset;
 
 import 'package:camera/camera.dart';
 import 'package:flutter/foundation.dart';
@@ -13,57 +12,61 @@ import 'logic.dart';
 
 const plateToken = String.fromEnvironment('PLATE_TOKEN');
 
-/// Gửi ảnh lên Plate Recognizer, trả về kết quả tốt nhất (plate, score...) hoặc null nếu không thấy biển.
-Future<Rec?> recognize(Uint8List jpg) async {
+/// Một lần đọc biển: biển tốt nhất, độ tin cậy, và các phương án đọc khác (OCR hay nhầm 1 ký tự).
+typedef PlateRead = ({String plate, double score, List<String> candidates});
+
+/// Cạnh dài ảnh gửi OCR. Gửi CẢ khung hình (biển ở đâu, góc nào cũng tìm được), chỉ thu nhỏ cho nhanh.
+/// Đo thực tế: 1280px (148KB) đọc đúng, tin cậy 0,997, ~1,7s; ảnh gốc 1080x1920 (~1MB) ~2,5s.
+const ocrMaxSide = 1280;
+
+/// Gửi ảnh lên Plate Recognizer. Ảnh có nhiều xe -> lấy biển có độ tin cậy cao nhất. null = không thấy biển.
+Future<PlateRead?> recognize(Uint8List jpg) async {
   // ponytail: token nằm trong file build; chuyển sang Edge Function proxy nếu phát hành app ra ngoài.
   final req = http.MultipartRequest('POST', Uri.parse('https://api.platerecognizer.com/v1/plate-reader/'))
     ..headers['Authorization'] = 'Token $plateToken'
     ..fields['regions'] = 'vn'
+    ..fields['config'] = '{"region":"strict"}' // chỉ nhận kết quả đúng mẫu biển Việt Nam
     ..files.add(http.MultipartFile.fromBytes('upload', jpg, filename: 'shot.jpg'));
-  final res = await http.Response.fromStream(await req.send().timeout(const Duration(seconds: 5)));
+  final res = await http.Response.fromStream(await req.send().timeout(const Duration(seconds: 8)));
   if (res.statusCode != 200 && res.statusCode != 201) {
     throw Exception('PlateRecognizer ${res.statusCode}: ${res.body}');
   }
-  final results = jsonDecode(res.body)['results'] as List;
-  return results.isEmpty ? null : results.first as Rec;
+  final results = (jsonDecode(res.body)['results'] as List).cast<Rec>();
+  if (results.isEmpty) return null;
+  final best = results.reduce((a, b) => (a['score'] as num) >= (b['score'] as num) ? a : b);
+  final plate = normPlate(best['plate'] as String);
+  final cands = [for (final c in (best['candidates'] as List? ?? const [])) normPlate((c as Rec)['plate'] as String)];
+  return (plate: plate, score: (best['score'] as num).toDouble(), candidates: cands.isEmpty ? [plate] : cands);
 }
 
-/// Vùng giữa ảnh (quanh khung ngắm) gửi đi OCR, theo tỉ lệ khung hình.
-/// Đo thực tế: ảnh gốc 993KB -> 2,5s; vùng cắt 79KB -> 1,4s, độ tin cậy còn cao hơn.
-/// ponytail: nới rộng vùng này nếu biển hay nằm lệch khỏi khung ngắm.
-const ocrCrop = (x: 0.15, y: 0.33, w: 0.70, h: 0.34);
-
-Uint8List cropForOcr(Uint8List jpg) {
+Uint8List shrinkForOcr(Uint8List jpg) {
   final im = img.bakeOrientation(img.decodeJpg(jpg)!);
-  final c = img.copyCrop(im,
-      x: (im.width * ocrCrop.x).round(),
-      y: (im.height * ocrCrop.y).round(),
-      width: (im.width * ocrCrop.w).round(),
-      height: (im.height * ocrCrop.h).round());
-  return img.encodeJpg(c, quality: 85);
+  final side = im.width > im.height ? im.width : im.height;
+  final out = side <= ocrMaxSide
+      ? im
+      : img.copyResize(im, width: im.width * ocrMaxSide ~/ side, height: im.height * ocrMaxSide ~/ side,
+          interpolation: img.Interpolation.average);
+  return img.encodeJpg(out, quality: 85);
 }
 
-Future<String?> readPlate(Uint8List jpg) async {
+Future<PlateRead?> readPlate(Uint8List jpg) async {
   Uint8List small;
   try {
-    small = await compute(cropForOcr, jpg); // isolate riêng: giải mã JPEG không làm giật giao diện
+    small = await compute(shrinkForOcr, jpg); // isolate riêng: giải mã JPEG không làm giật giao diện
   } catch (e) {
-    debugPrint('[ocr] cat anh loi, gui ca anh: $e');
+    debugPrint('[ocr] thu nho anh loi, gui anh goc: $e');
     small = jpg;
   }
-  final r = await recognize(small);
-  return r == null ? null : normPlate(r['plate'] as String);
+  return recognize(small);
 }
 
-/// Gọi một lần khi mở camera: camera gắn cố định ở cổng nên lấy nét + đo sáng liên tục vào giữa khung
-/// (nơi đặt biển số) là đủ, không cần lấy nét lại trước mỗi lần chụp. Tắt flash để khỏi chờ đèn đo sáng.
+/// Gọi một lần khi mở camera: tắt flash để khỏi chờ đèn đo sáng trước mỗi lần chụp.
+/// Lấy nét + đo sáng để camera tự động trên toàn khung (biển có thể ở bất kỳ đâu trong ảnh).
 Future<void> setupGateCamera(CameraController camera) async {
   try {
     await camera.setFlashMode(FlashMode.off);
-    if (camera.value.focusPointSupported) await camera.setFocusPoint(const Offset(0.5, 0.5));
-    if (camera.value.exposurePointSupported) await camera.setExposurePoint(const Offset(0.5, 0.5));
   } on CameraException catch (e) {
-    debugPrint('[camera] khong dat duoc flash/diem lay net: $e'); // vẫn chụp được với chế độ tự động
+    debugPrint('[camera] khong tat duoc flash: $e'); // vẫn chụp được
   }
 }
 
@@ -173,31 +176,46 @@ class GateStation {
     final openF = db.from('sessions').select().eq('card_uid', uid).isFilter('time_out', null).maybeSingle().then((r) => r);
     final extraF = (g == 'in' ? db.from('parking_status').select().single() : db.from('settings').select().single())
         .then((r) => r);
+    // Biển các xe đang trong bãi: chặn một biển vào 2 lần bằng 2 thẻ khác nhau.
+    final parkedF = g == 'in'
+        ? db.from('sessions').select('plate_in').isFilter('time_out', null).then(
+            (rows) => [for (final r in rows) if (r['plate_in'] != null) r['plate_in'] as String])
+        : Future.value(const <String>[]);
 
-    final bytes = await shoot(camera);
+    var bytes = await shoot(camera);
     final tShot = sw.elapsedMilliseconds;
     final now = DateTime.now();
     final path = '$g/${now.toIso8601String().substring(0, 10)}/${now.millisecondsSinceEpoch}_$uid.jpg';
 
-    String? plate;
-    try {
-      plate = await readPlate(bytes);
-    } catch (e) {
-      last.value = 'OCR loi: $e'; // plate = null -> decide* xử lý như không đọc được
+    var read = await _tryRead(bytes);
+    if (read == null || read.score < minPlateScore) {
+      // Không thấy biển / đọc chưa chắc (xe đang lăn, bị che...): chụp lại 1 lần, giữ kết quả tốt hơn.
+      // ponytail: mỗi lần chụp lại tốn thêm 1 lượt OCR (gói free 2.500 lượt/tháng).
+      final bytes2 = await shoot(camera);
+      final read2 = await _tryRead(bytes2);
+      if (read2 != null && (read == null || read2.score > read.score)) {
+        bytes = bytes2;
+        read = read2;
+      }
     }
+    final plate = read?.plate;
     final tOcr = sw.elapsedMilliseconds;
     // Upload ảnh (~1MB) bắt đầu SAU OCR để không giành băng thông.
     final upload = db.storage
         .from('plates')
         .uploadBinary(path, bytes, fileOptions: const FileOptions(contentType: 'image/jpeg'));
-    final card = await cardF, open = await openF, extra = await extraF;
+    final card = await cardF, open = await openF, extra = await extraF, parked = await parkedF;
 
     final Decision d;
     if (g == 'in') {
-      d = decideEntry(card: card, hasOpenSession: open != null, free: extra['free'] as int, plate: plate);
+      d = decideEntry(
+          card: card, hasOpenSession: open != null, free: extra['free'] as int, plate: plate,
+          score: read?.score ?? 0, candidates: read?.candidates ?? const [], parkedPlates: parked);
       if (d.ok) await db.from('sessions').insert({'card_uid': uid, 'plate_in': plate, 'img_in': path});
     } else {
-      d = decideExit(card: card, session: open, plateOut: plate, now: now, cfg: FeeConfig.fromRow(extra));
+      d = decideExit(
+          card: card, session: open, plateOut: plate, candidates: read?.candidates ?? const [],
+          now: now, cfg: FeeConfig.fromRow(extra));
       if (d.ok) await _close(open!['id'] as int, plate, path, d.fee!, null);
     }
 
@@ -276,6 +294,16 @@ class GateStation {
       last.value = 'Mo cong theo lenh tu app';
     } catch (e) {
       last.value = 'Lenh mo cong loi: $e'; // giữ pending để thấy trên dashboard
+    }
+  }
+
+  /// Lỗi mạng / OCR -> null (decide* xử lý như không đọc được biển) và hiện lỗi trên màn camera.
+  Future<PlateRead?> _tryRead(Uint8List jpg) async {
+    try {
+      return await readPlate(jpg);
+    } catch (e) {
+      last.value = 'OCR loi: $e';
+      return null;
     }
   }
 

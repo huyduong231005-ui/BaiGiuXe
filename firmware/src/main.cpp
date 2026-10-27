@@ -38,6 +38,7 @@ const uint32_t BARRIER_HOLD_MS = 5000;
 const uint32_t RESULT_TIMEOUT_MS = 12000;  // ĐT chụp + OCR + DB thường ~3-5s
 const uint32_t PIN_REPLY_TIMEOUT_MS = 8000;
 const uint32_t SAME_CARD_DEBOUNCE_MS = 3000;
+const uint32_t RFID_CHECK_MS = 2000;  // kiểm tra RC522 còn đúng cấu hình (bị reset do sụt áp thì khởi tạo lại)
 const uint32_t MSG_SHOW_MS = 5000;
 const uint32_t AUTH_WINDOW_MS = 20000;
 const int PIN_MAX_TRIES = 5;
@@ -64,6 +65,7 @@ struct Gate {
   MFRC522 &rfid;
   long pendingId = 0;
   uint32_t pendingAt = 0, lastUidAt = 0;
+  unsigned long resets = 0;  // số lần RC522 bị reset (sụt áp) phải khởi tạo lại
   String lastUid;
 };
 Gate gIn{"in", rfidIn};
@@ -221,10 +223,16 @@ void readCard(Gate &g) {
     uid += hex;
   }
   g.rfid.PICC_HaltA();
+  Serial.printf("[rfid] cong %s doc the %s\n", g.name, uid.c_str());
   if (uid == g.lastUid && millis() - g.lastUidAt < SAME_CARD_DEBOUNCE_MS) return;
   g.lastUid = uid;
   g.lastUidAt = millis();
-  if (!phoneConnected(g.name)) return finishScan(g, false, "TU CHOI", "Chua ket noi DT", false);
+  if (!phoneConnected(g.name)) {
+    // Ghi rõ thiếu ĐT cho cổng nào: hay gặp khi chỉ có 1 ĐT mà chọn vai trò "cổng vào" thay vì "cả 2 cổng".
+    const char *gateVi = strcmp(g.name, "in") ? "ra" : "vao";
+    Serial.printf("[rfid] khong co DT phu trach cong %s -> tu choi\n", gateVi);
+    return finishScan(g, false, "TU CHOI", String("Chua co DT cong ") + gateVi, false);
+  }
 
   g.pendingId = nextId++;
   g.pendingAt = millis();
@@ -235,6 +243,32 @@ void readCard(Gate &g) {
   ev["uid"] = uid;
   ev["id"] = g.pendingId;
   notify(ev);
+}
+
+// RC522 bị sụt áp (WiFi phát sóng, servo kéo dòng) tự reset: vẫn trả lời SPI nhưng cấu hình về mặc định,
+// ĂNG-TEN TẮT -> không bao giờ đọc được thẻ nữa. Kiểm tra các thanh ghi PCD_Init đã đặt, lệch thì khởi tạo lại.
+// (Bài học từ project KhoaBaoMat, commit b371f3e.)
+bool rfidConfigured(MFRC522Driver &d) {
+  using R = MFRC522Constants::PCD_Register;
+  return (d.PCD_ReadRegister(R::TxControlReg) & 0x03) == 0x03 &&  // ăng-ten đang bật
+         d.PCD_ReadRegister(R::TModeReg) == 0x80 &&               // bộ định thời tự chạy
+         d.PCD_ReadRegister(R::TxASKReg) == 0x40;                 // điều chế 100% ASK
+}
+
+void healRfid(Gate &g, MFRC522Driver &d) {
+  if (rfidConfigured(d)) return;
+  using R = MFRC522Constants::PCD_Register;
+  Serial.printf("[rfid] dau doc %s bi reset (sut ap?) TxControl 0x%02X TMode 0x%02X - khoi tao lai (lan %lu)\n",
+                g.name, d.PCD_ReadRegister(R::TxControlReg), d.PCD_ReadRegister(R::TModeReg), ++g.resets);
+  g.rfid.PCD_Init();
+}
+
+void checkRfidHealth() {
+  static uint32_t last = 0;
+  if (millis() - last < RFID_CHECK_MS) return;
+  last = millis();
+  healRfid(gIn, drvIn);
+  healRfid(gOut, drvOut);
 }
 
 void checkTimeouts() {
@@ -257,7 +291,15 @@ void grantLocal(const String &how) {
 }
 
 void checkFinger() {
-  if (!fpOk || millis() - lastFp < 200) return;
+  // AS608 có lúc không trả lời lúc khởi động (chưa sẵn sàng / sụt áp khi WiFi phát): thử lại mỗi 5s
+  // thay vì tắt vân tay tới lần reset sau.
+  if (!fpOk) {
+    if (millis() - lastFp < 5000) return;
+    lastFp = millis();
+    if ((fpOk = finger.verifyPassword())) Serial.println("[boot] AS608 da tra loi");
+    return;
+  }
+  if (millis() - lastFp < 200) return;
   lastFp = millis();
   if (finger.getImage() != FINGERPRINT_OK) return;
   if (finger.image2Tz() != FINGERPRINT_OK || finger.fingerFastSearch() != FINGERPRINT_OK) {
@@ -428,6 +470,7 @@ void loop() {
   checkKeypad();
   readCard(gIn);
   readCard(gOut);
+  checkRfidHealth();
   checkTimeouts();
 
   uint32_t now = millis();
