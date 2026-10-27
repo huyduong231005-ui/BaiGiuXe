@@ -1,13 +1,16 @@
 // ESP32 bãi giữ xe: 2 đầu đọc RFID, barrier cổng ra, OLED, phím, vân tay bảo vệ.
-// Giao tiếp với điện thoại camera qua BLE (NimBLE), không dùng WiFi:
-//   ESP32 notify (EVT): {"t":"scan","g":"in","uid":"..","id":5} · {"t":"auth","g":"out","pin":"1234"|"finger":3}
-//                       · {"t":"emg","g":"out","on":true}
-//   ĐT write (CMD):     {"t":"res","id":5,"ok":true,"open":true,"l1":"..","l2":".."} · {"t":"open"}
-//                       · {"t":"st","free":37,"cap":50} · {"t":"time","ts":<giây local>} · {"t":"auth","ok":true}
-// Điện thoại lo phần Supabase. Nút khẩn cấp và vân tay mở cổng cục bộ, không cần điện thoại.
+// Giao tiếp với điện thoại camera qua MQTT (HiveMQ Cloud, TLS): ESP32 dùng WiFi bãi xe, ĐT dùng WiFi hay 4G đều được.
+//   ESP32 -> bgx/evt:  {"t":"scan","g":"in","uid":"..","id":5} · {"t":"auth","g":"out","pin":"1234"|"finger":3}
+//                      · {"t":"emg","g":"out","on":true}
+//   ĐT -> bgx/cmd:     {"t":"res","id":5,"ok":true,"open":true,"l1":"..","l2":".."} · {"t":"open"}
+//                      · {"t":"st","free":37,"cap":50} · {"t":"time","ts":<giây local>} · {"t":"auth","ok":true}
+//   Online/offline (retained + LWT, "1"/"0"): bgx/esp (ESP32), bgx/phone/in|out|both (từng ĐT).
+// Điện thoại lo phần Supabase. Nút khẩn cấp và vân tay mở cổng cục bộ, không cần mạng.
 #include <Arduino.h>
 #include <ArduinoJson.h>
-#include <NimBLEDevice.h>
+#include <WiFi.h>
+#include <WiFiClientSecure.h>
+#include <PubSubClient.h>
 #include <SPI.h>
 #include <Wire.h>
 #include <MFRC522v2.h>
@@ -19,12 +22,14 @@
 #include <Adafruit_Fingerprint.h>
 #include <ESP32Servo.h>
 #include "pins.h"
+#include "secrets.h"
+#include "ca_roots.h"
 
 // Phải trùng với app/lib/esp_link.dart
-#define BLE_NAME "BaiGiuXe"
-#define SVC_UUID "8f3c0001-2b6e-4d1a-9c55-6b61e2a7c001"
-#define EVT_UUID "8f3c0001-2b6e-4d1a-9c55-6b61e2a7c002"
-#define CMD_UUID "8f3c0001-2b6e-4d1a-9c55-6b61e2a7c003"
+#define T_EVT "bgx/evt"
+#define T_CMD "bgx/cmd"
+#define T_ESP "bgx/esp"
+#define T_PHONE "bgx/phone/"
 
 // ---- Hiệu chỉnh theo phần cứng thật ----
 const int SERVO_OPEN_DEG = 90;
@@ -49,9 +54,8 @@ Adafruit_SSD1306 oled(128, 64, &Wire, -1);
 RTC_DS3231 rtc;
 Adafruit_Fingerprint finger(&Serial2);
 Servo barrier;
-NimBLEServer *bleServer;
-NimBLECharacteristic *evtChr;
-QueueHandle_t cmdQueue;  // lệnh từ ĐT: callback BLE chạy ở task khác, loop() mới xử lý
+WiFiClientSecure net;
+PubSubClient mqtt(net);
 
 // ---- Trạng thái ----
 struct Gate {
@@ -76,50 +80,67 @@ uint32_t authUntil = 0, pinLockUntil = 0, pinSentAt = 0;
 String pinBuf;
 int pinFails = 0;
 char lastKey = 'N';
+bool phoneIn = false, phoneOut = false, phoneBoth = false;  // theo bgx/phone/<cổng>
+uint32_t lastMqttTry = 0;
 
-// ---------- BLE ----------
+// ---------- MQTT ----------
 
-struct ServerCb : NimBLEServerCallbacks {
-  // Quảng bá lại ngay để điện thoại thứ hai (cổng còn lại) kết nối được.
-  void onConnect(NimBLEServer *) override { NimBLEDevice::startAdvertising(); }
-  void onDisconnect(NimBLEServer *) override { NimBLEDevice::startAdvertising(); }
-};
+void handleCmd(const char *s);
 
-struct CmdCb : NimBLECharacteristicCallbacks {
-  void onWrite(NimBLECharacteristic *c) override {
-    char buf[CMD_MAX] = {0};
-    std::string v = c->getValue();
-    strncpy(buf, v.c_str(), CMD_MAX - 1);
-    if (xQueueSend(cmdQueue, buf, 0) != pdTRUE) Serial.println("[ble] hang doi lenh day");
-  }
-};
-
-bool phoneConnected() { return bleServer->getConnectedCount() > 0; }
+/// Có ĐT nào đang xử lý cổng g ("in"/"out") không. nullptr = bất kỳ cổng nào.
+bool phoneConnected(const char *g = nullptr) {
+  if (!mqtt.connected()) return false;
+  if (!g) return phoneIn || phoneOut || phoneBoth;
+  return phoneBoth || (strcmp(g, "in") ? phoneOut : phoneIn);
+}
 
 void notify(JsonDocument &doc) {
   String s;
   serializeJson(doc, s);
-  // Phải truyền (data, len): setValue(const char*) của NimBLE 1.4 rơi vào template setValue(const T&)
-  // và gửi 4 byte của con trỏ thay vì chuỗi.
-  evtChr->setValue((const uint8_t *)s.c_str(), s.length());
-  evtChr->notify();
+  mqtt.publish(T_EVT, s.c_str());
 }
 
-void initBle() {
-  cmdQueue = xQueueCreate(8, CMD_MAX);
-  NimBLEDevice::init(BLE_NAME);
-  NimBLEDevice::setMTU(247);  // bản tin JSON dài hơn 20 byte mặc định
-  bleServer = NimBLEDevice::createServer();
-  bleServer->setCallbacks(new ServerCb());
-  NimBLEService *svc = bleServer->createService(SVC_UUID);
-  evtChr = svc->createCharacteristic(EVT_UUID, NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY);
-  NimBLECharacteristic *cmd = svc->createCharacteristic(CMD_UUID, NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR);
-  cmd->setCallbacks(new CmdCb());
-  svc->start();
-  NimBLEAdvertising *adv = NimBLEDevice::getAdvertising();
-  adv->addServiceUUID(SVC_UUID);
-  adv->setScanResponse(true);
-  adv->start();
+void onMqtt(char *topic, byte *payload, unsigned int len) {
+  char buf[CMD_MAX];
+  len = min(len, (unsigned)CMD_MAX - 1);
+  memcpy(buf, payload, len);
+  buf[len] = 0;
+  if (!strcmp(topic, T_CMD)) return handleCmd(buf);
+  bool on = buf[0] == '1';
+  if (!strcmp(topic, T_PHONE "in")) phoneIn = on;
+  else if (!strcmp(topic, T_PHONE "out")) phoneOut = on;
+  else if (!strcmp(topic, T_PHONE "both")) phoneBoth = on;
+}
+
+void initMqtt() {
+  WiFi.mode(WIFI_STA);
+  WiFi.setSleep(false);  // tắt modem sleep: bớt ~100ms trễ mỗi bản tin
+  WiFi.begin(WIFI_SSID, WIFI_PASS);  // tự kết nối lại khi rớt WiFi
+  net.setCACert(CA_ROOTS);
+  net.setHandshakeTimeout(5);
+  mqtt.setServer(MQTT_HOST, 8883);
+  mqtt.setCallback(onMqtt);
+  mqtt.setBufferSize(CMD_MAX + 64);  // mặc định 256 byte, chưa đủ cho bản tin res dài + topic
+  mqtt.setSocketTimeout(5);
+}
+
+void mqttLoop() {
+  if (mqtt.connected()) {
+    mqtt.loop();
+    return;
+  }
+  phoneIn = phoneOut = phoneBoth = false;
+  if (WiFi.status() != WL_CONNECTED || millis() - lastMqttTry < 5000) return;
+  lastMqttTry = millis();
+  // shortcut: bắt tay TLS chặn loop ~1-2s mỗi lần thử (tối đa 5s); tách sang task riêng nếu cần phím/còi phản hồi khi mất mạng.
+  if (!mqtt.connect("bgx-esp32", MQTT_USER, MQTT_PASS, T_ESP, 1, true, "0")) {
+    Serial.printf("[mqtt] ket noi loi %d\n", mqtt.state());
+    return;
+  }
+  mqtt.publish(T_ESP, "1", true);
+  mqtt.subscribe(T_CMD, 1);
+  mqtt.subscribe(T_PHONE "+", 1);  // nhận lại trạng thái ĐT (retained) ngay khi kết nối
+  Serial.println("[mqtt] da ket noi");
 }
 
 // ---------- Hiển thị / còi ----------
@@ -130,12 +151,23 @@ void showMsg(const String &a, const String &b = "") {
   msgUntil = millis() + MSG_SHOW_MS;
 }
 
+// Kênh LEDC 15 (timer 3) để không đụng kênh/timer 0 mà ESP32Servo cấp cho barrier.
+const int BUZZER_CH = 15;
+
+void buzz(bool on) {
+#if BUZZER_PASSIVE
+  ledcWrite(BUZZER_CH, on ? 128 : 0);  // xung vuông 50%
+#else
+  digitalWrite(BUZZER_PIN, on);
+#endif
+}
+
 void beep(int times, int ms = 100) {
   // ponytail: còi chặn loop tối đa ~600ms; chuyển sang non-blocking nếu cần phản hồi nhanh hơn.
   for (int i = 0; i < times; i++) {
-    digitalWrite(BUZZER_PIN, HIGH);
+    buzz(true);
     delay(ms);
-    digitalWrite(BUZZER_PIN, LOW);
+    buzz(false);
     if (i < times - 1) delay(ms);
   }
 }
@@ -152,7 +184,9 @@ void draw() {
   oled.print(phoneConnected() ? "" : " !");  // "!" = chưa có điện thoại nào kết nối
   oled.setCursor(0, 12);
   if (emergency) oled.print("!! KHAN CAP - MO !!");
-  else if (!phoneConnected()) oled.print("Cho DT ket noi BLE");
+  else if (WiFi.status() != WL_CONNECTED) oled.print("Mat WiFi");
+  else if (!mqtt.connected()) oled.print("Mat may chu MQTT");
+  else if (!phoneConnected()) oled.print("Cho DT ket noi");
   else if (freeSlots >= 0) oled.printf("Con trong: %d/%d", freeSlots, capacity);
   bool showing = millis() < msgUntil || authMode;
   oled.setTextSize(msg1.length() <= 10 ? 2 : 1);
@@ -190,7 +224,7 @@ void readCard(Gate &g) {
   if (uid == g.lastUid && millis() - g.lastUidAt < SAME_CARD_DEBOUNCE_MS) return;
   g.lastUid = uid;
   g.lastUidAt = millis();
-  if (!phoneConnected()) return finishScan(g, false, "TU CHOI", "Chua ket noi DT", false);
+  if (!phoneConnected(g.name)) return finishScan(g, false, "TU CHOI", "Chua ket noi DT", false);
 
   g.pendingId = nextId++;
   g.pendingAt = millis();
@@ -233,7 +267,7 @@ void checkFinger() {
   }
   // Vân tay đã khớp mẫu trong AS608 -> mở ngay; ĐT chỉ ghi log + đóng lượt bị từ chối gần nhất.
   grantLocal("Van tay #" + String(finger.fingerID));
-  if (!phoneConnected()) return;  // ponytail: không có ĐT thì log bị mất, quản lý đóng lượt tay trong app
+  if (!phoneConnected("out")) return;  // ponytail: không có ĐT thì log bị mất, quản lý đóng lượt tay trong app
   JsonDocument ev;
   ev["t"] = "auth";
   ev["g"] = "out";
@@ -243,11 +277,11 @@ void checkFinger() {
 
 void submitPin() {
   if (millis() < pinLockUntil) return showMsg("Tam khoa", "Thu lai sau 60s");
-  if (!phoneConnected()) return showMsg("Mat ket noi DT", "Dung van tay");
+  if (!phoneConnected("out")) return showMsg("Mat ket noi DT", "Dung van tay");
   JsonDocument ev;
   ev["t"] = "auth";
   ev["g"] = "out";
-  ev["pin"] = pinBuf;  // ponytail: BLE chưa mã hoá; bật pairing/bonding nếu sợ bị dò PIN trong tầm 10m
+  ev["pin"] = pinBuf;  // đi qua TLS tới broker
   notify(ev);
   pinSentAt = millis();
   showMsg("Dang kiem tra", "PIN...");
@@ -306,7 +340,7 @@ void checkEmergency() {
   barrier.write(emergency ? SERVO_OPEN_DEG : SERVO_CLOSE_DEG);
   barrierCloseAt = 0;
   beep(emergency ? 5 : 1, 60);
-  if (!phoneConnected()) return;
+  if (!phoneConnected("out")) return;
   JsonDocument ev;
   ev["t"] = "emg";
   ev["g"] = "out";
@@ -319,7 +353,7 @@ void checkEmergency() {
 void handleCmd(const char *s) {
   JsonDocument d;
   if (deserializeJson(d, s)) {
-    Serial.printf("[ble] JSON loi: %s\n", s);
+    Serial.printf("[mqtt] JSON loi: %s\n", s);
     return;
   }
   const char *t = d["t"] | "";
@@ -353,6 +387,12 @@ void setup() {
   Serial.begin(115200);
   pinMode(BUZZER_PIN, OUTPUT);
   digitalWrite(BUZZER_PIN, LOW);
+#if BUZZER_PASSIVE
+  ledcSetup(BUZZER_CH, BUZZER_HZ, 8);
+  ledcAttachPin(BUZZER_PIN, BUZZER_CH);
+#endif
+  gpio_set_drive_capability((gpio_num_t)BUZZER_PIN, GPIO_DRIVE_CAP_3);  // dòng ra tối đa ~40mA
+  buzz(false);
   pinMode(EMERGENCY_PIN, INPUT);
 
   Wire.begin(I2C_SDA, I2C_SCL);
@@ -375,14 +415,13 @@ void setup() {
   barrier.attach(SERVO_PIN, 500, 2400);
   barrier.write(SERVO_CLOSE_DEG);
 
-  initBle();
-  Serial.println("[boot] BLE san sang: " BLE_NAME);
+  initMqtt();
+  Serial.println("[boot] dang ket noi WiFi: " WIFI_SSID);
   showMsg("San sang");
 }
 
 void loop() {
-  char cmd[CMD_MAX];
-  while (xQueueReceive(cmdQueue, cmd, 0) == pdTRUE) handleCmd(cmd);
+  mqttLoop();  // nhận lệnh từ ĐT -> handleCmd
 
   checkEmergency();
   checkFinger();

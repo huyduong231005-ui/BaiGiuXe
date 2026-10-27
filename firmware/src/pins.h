@@ -28,6 +28,9 @@
 // Còi, servo: đã đo bằng hwtest lệnh 'g' (dò chân bằng bàn phím). Hệ thống không dùng LED.
 
 #define BUZZER_PIN    19  // lúc dò, chân 25 cũng được báo là còi: kiểm lại nếu còi không kêu
+// Còi thật là loại thụ động: bật DC chỉ kêu "tạch" nhỏ, phải phát xung. Đổi 0 nếu thay bằng còi active.
+#define BUZZER_PASSIVE 1
+#define BUZZER_HZ      2700  // tần số cộng hưởng phổ biến của còi 12mm, kêu to nhất
 #define SERVO_PIN     26
 #define EMERGENCY_PIN 34  // chân chỉ-vào, dùng trở 10k ngoài
 #define EMERGENCY_ACTIVE LOW  // đo thực tế: trở kéo lên, nhấn nối xuống GND -> nhấn = LOW

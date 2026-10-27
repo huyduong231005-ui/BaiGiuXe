@@ -3,9 +3,9 @@
 ESP32 (2 đầu đọc RFID, barrier, OLED, phím, vân tay) + 2 điện thoại làm camera chụp biển số + app Flutter quản lý, dùng chung CSDL Supabase.
 
 ```
-ESP32 --INSERT gate_events(scan)--> Supabase --Realtime--> ĐT camera của cổng đó
-ĐT camera: chụp -> Plate Recognizer -> lưu ảnh -> quyết định -> UPDATE gate_events
-ESP32 poll kết quả -> còi / OLED / barrier
+ESP32 (WiFi bãi xe) --MQTT bgx/evt--> HiveMQ Cloud --> ĐT camera của cổng đó (WiFi hoặc 4G)
+ĐT camera: chụp -> Plate Recognizer -> quyết định -> MQTT bgx/cmd -> ESP32: còi / OLED / barrier
+ĐT camera ghi sessions, gate_events, ảnh vào Supabase
 App quản lý: tổng quan, lịch sử + doanh thu, thẻ, bảo vệ, giá
 ```
 
@@ -34,12 +34,20 @@ App quản lý: tổng quan, lịch sử + doanh thu, thẻ, bảo vệ, giá
 
 Đăng ký tại platerecognizer.com (gói free 2.500 lượt/tháng) và lấy API token.
 
+## 2b. HiveMQ Cloud (MQTT)
+
+ESP32 và 2 ĐT camera nói chuyện qua broker MQTT, nên ĐT dùng WiFi hay 4G đều được, không cần đứng gần ESP32.
+
+1. Đăng ký console.hivemq.cloud, tạo cluster **Serverless (Free)**.
+2. **Overview**: chép *Cluster URL* (dạng `xxxx.s1.eu.hivemq.cloud`), cổng TLS là 8883.
+3. **Access Management → Credentials**: tạo 2 tài khoản, một cho ESP32, một cho app.
+
 ## 3. App Flutter
 
 ```bash
 cd app
 flutter test
-# Điền app/dart_defines.json (gitignore): SUPABASE_URL, SUPABASE_KEY, PLATE_TOKEN
+# Điền app/dart_defines.json (gitignore): SUPABASE_URL, SUPABASE_KEY, PLATE_TOKEN, MQTT_HOST, MQTT_USER, MQTT_PASS
 flutter run --dart-define-from-file=dart_defines.json
 ```
 
@@ -55,14 +63,15 @@ Tính phí: lượt không qua mốc đêm (mặc định 22:00) tính giá ngà
 
 ```bash
 cd firmware
-cp src/secrets.h.example src/secrets.h   # điền WiFi, URL, key, tài khoản device
+cp src/secrets.h.example src/secrets.h   # điền WiFi 2.4GHz của bãi + tài khoản HiveMQ của ESP32
 pio run -t upload && pio device monitor
 ```
 
 - **Đối chiếu `src/pins.h` với dây thật trước khi nạp.** Bảng chân được đọc lại từ sơ đồ.
 - Cần hiệu chỉnh trên phần cứng thật: `SERVO_OPEN_DEG` / `SERVO_CLOSE_DEG`, `KEYMAP` (nếu phím bấm ra sai ký tự), `EMERGENCY_ACTIVE`.
 - Đăng ký vân tay bảo vệ: nạp sketch mẫu `enroll` của thư viện *Adafruit Fingerprint* một lần, ghi lại ID, rồi nhập ID đó trong app (Cài đặt → Bảo vệ).
-- `src/ca_roots.h` chứa root CA của Let's Encrypt và Google Trust Services, dùng cho HTTPS tới `*.supabase.co`.
+- `src/ca_roots.h` chứa root CA của Let's Encrypt (ISRG X1, X2), dùng cho TLS tới HiveMQ Cloud.
+- Dòng 2 của OLED: `Mat WiFi` → kiểm tra WiFi bãi; `Mat may chu MQTT` → kiểm tra tài khoản/URL HiveMQ; `Cho DT ket noi` → chưa có ĐT camera nào mở app.
 
 ### Thao tác ở cổng
 | Tình huống | ESP32 |

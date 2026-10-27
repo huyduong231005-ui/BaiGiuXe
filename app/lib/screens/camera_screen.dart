@@ -73,7 +73,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       await c.setZoomLevel(zoom);
       await setupGateCamera(c);
       await WakelockPlus.enable();
-      station = GateStation(widget.gate, c, EspLink())
+      station = GateStation(widget.gate, c, EspLink(widget.gate))
         ..busy.addListener(_onBusy)
         ..start();
       if (mounted) setState(() => cam = c);

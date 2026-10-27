@@ -69,8 +69,8 @@ Future<void> setupGateCamera(CameraController camera) async {
 
 Future<Uint8List> shoot(CameraController camera) async => (await camera.takePicture()).readAsBytes();
 
-/// Vai trò camera của một cổng: nhận sự kiện từ ESP32 qua BLE, chụp + đọc biển, quyết định,
-/// trả kết quả cho ESP32 qua BLE rồi mới ghi Supabase (không nằm trên đường chờ của cổng).
+/// Vai trò camera của một cổng: nhận sự kiện từ ESP32 qua MQTT, chụp + đọc biển, quyết định,
+/// trả kết quả cho ESP32 qua MQTT rồi mới ghi Supabase (không nằm trên đường chờ của cổng).
 class GateStation {
   GateStation(this.gate, this.camera, this.link);
 
@@ -97,7 +97,7 @@ class GateStation {
         .where((ev) => gate == 'both' || ev['g'] == gate)
         .listen((ev) => _queue = _queue.then((_) => _handle(ev)));
     if (gate != 'in') {
-      // Nút "Mở cổng ra" trên app Quản lý -> gate_events(open_cmd) -> ĐT cổng ra -> BLE -> ESP32.
+      // Nút "Mở cổng ra" trên app Quản lý -> gate_events(open_cmd) -> ĐT cổng ra -> MQTT -> ESP32.
       _openCh = db
           .channel('open-cmd')
           .onPostgresChanges(
