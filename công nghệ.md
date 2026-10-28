@@ -25,16 +25,21 @@ Luồng một lượt quẹt thẻ:
 4. ESP32 bíp còi, hiện kết quả lên OLED và mở barrier (ở cổng ra).
 5. Điện thoại lưu ảnh và nhật ký vào Supabase. App quản lý thấy cập nhật ngay qua Realtime.
 
+Luồng bảo vệ (bàn phím + vân tay):
+- **Mở cổng:** vân tay đã đăng ký được AS608 so khớp ngay trên ESP32 và mở barrier, không cần mạng. Mở bằng PIN (phím A) thì điện thoại kiểm tra PIN qua hàm `find_guard` trong Supabase.
+- **Đăng ký vân tay (phím B):** điện thoại kiểm tra PIN bảo vệ, ESP32 lấy 2 ảnh cùng một ngón, ghép mẫu và lưu vào AS608 ở ô số = ID bảo vệ, rồi điện thoại ghi `finger_id` cho bảo vệ đó.
+- **Chấm công (phím C):** ESP32 gửi vân tay/PIN lên, điện thoại xác định bảo vệ, tự quyết vào ca hay ra ca, xếp vào ca gần nhất theo lịch, tính số phút trễ / về sớm rồi ghi bảng `attendance`.
+
 ## 2. Phần cứng
 
 | Linh kiện | Giao tiếp | Chân ESP32 | Vai trò |
 |---|---|---|---|
 | ESP32 DevKit V1 | — | — | Bộ điều khiển trung tâm, có WiFi |
 | 2 × RC522 (RFID 13,56 MHz) | SPI (VSPI và HSPI) | Vào: SS 5, SCK 18, MOSI 23, MISO 36, RST 4 · Ra: SS 27, SCK 14, MOSI 32, MISO 35, RST 33 | Đọc thẻ ở cổng vào và cổng ra |
-| Bàn phím 4×4 qua PCF8574 | I2C (địa chỉ 0x20) | SDA 21, SCL 22 | Bảo vệ nhập PIN mở cổng |
+| Bàn phím 4×4 qua PCF8574 | I2C (địa chỉ 0x20) | SDA 21, SCL 22 | A mở cổng, B đăng ký vân tay, C chấm công, nhập PIN |
 | OLED SSD1306 0,96" 128×64, 2 màu | I2C (0x3C) | SDA 21, SCL 22 | Hiện giờ, trạng thái, biển số, lý do |
 | DS3231 (đồng hồ thời gian thực) | I2C (0x68) | SDA 21, SCL 22 | Giữ giờ khi mất điện, đồng bộ theo điện thoại |
-| AS608 (cảm biến vân tay) | UART2, 57600 baud | RX 16, TX 17 | Bảo vệ mở cổng bằng vân tay, không cần mạng |
+| AS608 (cảm biến vân tay) | UART2, 57600 baud | RX 16, TX 17 | Mở cổng (không cần mạng), chấm công, đăng ký mẫu ngay trên thiết bị |
 | Servo | PWM 50 Hz | 13 | Barrier cổng ra |
 | Còi thụ động | PWM 2,7 kHz (LEDC kênh 15) | 19 | Bíp báo kết quả |
 | Nút khẩn cấp | Digital, trở kéo lên 10k ngoài | 34 | Mở/đóng barrier tức thì, không cần mạng |
@@ -62,12 +67,12 @@ Thư viện:
 | Adafruit GFX Library | 1.13.0 | Vẽ chữ, kèm font FreeSans / FreeSansBold 9pt và 12pt |
 | Adafruit BusIO | 1.17.4 | Thư viện phụ thuộc của Adafruit (I2C/SPI) |
 | RTClib (Adafruit) | 2.1.4 | Đọc và chỉnh giờ DS3231 |
-| Adafruit Fingerprint Sensor Library | 2.1.4 | Giao tiếp cảm biến vân tay AS608 |
+| Adafruit Fingerprint Sensor Library | 2.1.4 | Giao tiếp AS608: so khớp (`fingerFastSearch`), đăng ký mẫu (`image2Tz`, `createModel`, `storeModel`) |
 | ESP32Servo | 3.2.1 | Điều khiển servo barrier |
 | ArduinoJson | 7.4.3 | Tạo và đọc bản tin JSON trao đổi với điện thoại |
 | PubSubClient (knolleary) | 2.8 | MQTT client: kết nối broker, publish/subscribe, LWT |
 
-Chứng chỉ gốc cho TLS nằm trong `firmware/src/ca_roots.h` (DigiCert Global Root G2 cho EMQX Cloud, ISRG Root X1/X2 cho Let's Encrypt). Thông tin WiFi và MQTT nằm trong `firmware/src/secrets.h` (không đưa lên git).
+Chứng chỉ gốc cho TLS nằm trong `firmware/src/ca_roots.h` (DigiCert Global Root G2 cho EMQX Cloud, ISRG Root X1/X2 cho Let's Encrypt). Thông tin WiFi và MQTT nằm trong `firmware/src/secrets.h` (đang được đưa lên repo, xem mục Bảo mật).
 
 Ngoài firmware chính còn có firmware kiểm tra phần cứng `firmware/src/hwtest.cpp`, nạp bằng `pio run -e hwtest`, dùng để dò chân và thử từng linh kiện.
 
@@ -93,10 +98,10 @@ Thư viện:
 | wakelock_plus | 1.8.2 | Giữ màn hình điện thoại camera luôn sáng |
 | shared_preferences | 2.5.6 | Lưu vai trò thiết bị và mức zoom camera |
 | cupertino_icons | 1.0.9 | Bộ icon |
-| flutter_test (dev) | theo SDK | Kiểm thử đơn vị (`app/test/`) |
+| flutter_test (dev) | theo SDK | Kiểm thử đơn vị (`app/test/`): tính phí, quyết định xe vào/ra, so khớp biển, cắt ảnh, xếp ca, tính trễ/sớm |
 | flutter_lints (dev) | 6.0.0 | Quy tắc kiểm tra code |
 
-Giao diện dùng Material 3 (sáng/tối theo hệ thống). Khoá API và thông tin máy chủ truyền vào lúc build qua `--dart-define-from-file=dart_defines.json` (không đưa lên git).
+Giao diện dùng Material 3 (sáng/tối theo hệ thống). Các màn chính: Tổng quan, Lịch sử, Thẻ, Bảo vệ (kèm Bảng công), Cài đặt (kèm Ca trực), Camera. Khoá API và thông tin máy chủ truyền vào lúc build qua `--dart-define-from-file=dart_defines.json`.
 
 ## 5. Dịch vụ đám mây
 
@@ -104,18 +109,19 @@ Giao diện dùng Material 3 (sáng/tối theo hệ thống). Khoá API và thô
 
 | Tính năng | Dùng để |
 |---|---|
-| PostgreSQL | Các bảng `settings`, `cards`, `guards`, `sessions`, `gate_events` và view `parking_status` |
+| PostgreSQL | Các bảng `settings`, `cards`, `guards`, `sessions`, `gate_events`, `shift_defs` (ca trực), `attendance` (chấm công) và view `parking_status` |
 | Auth (email + mật khẩu) | Đăng nhập nhân viên. Vai trò lưu trong `app_metadata.role` (`staff`) |
 | Row Level Security | Chỉ tài khoản `staff` mới đọc/ghi được dữ liệu |
 | RPC (hàm SQL) | `find_guard` kiểm tra PIN/vân tay bảo vệ, `set_guard_pin` đặt PIN |
 | pgcrypto | Băm PIN bảo vệ bằng bcrypt (`crypt`, `gen_salt('bf')`) |
 | Storage (bucket private `plates`) | Lưu ảnh biển số lúc vào và lúc ra |
-| Realtime | App quản lý cập nhật ngay khi có xe ra vào. Màn thêm thẻ nhận UID khi quẹt |
+| Realtime | App quản lý cập nhật ngay khi có xe ra vào. Màn thêm thẻ nhận UID khi quẹt. Màn Bảo vệ tự làm mới khi đăng ký vân tay / chấm công |
 
 Các file migration nằm trong `supabase/migrations/`:
 - `0001_init.sql`: tạo bảng, RLS, RPC, bucket ảnh, realtime.
 - `0002_ble.sql`: cập nhật hàm kiểm tra bảo vệ.
 - `0003_entry_constraints.sql`: ràng buộc xe vào phải có biển số, và mỗi biển chỉ có một lượt đang gửi.
+- `0004_attendance.sql`: bảng ca trực (mặc định Sáng 06–14, Chiều 14–22, Đêm 22–06) và bảng chấm công, mỗi bảo vệ chỉ có một ca đang mở.
 
 ### EMQX Cloud Serverless (MQTT broker)
 
@@ -125,8 +131,8 @@ Các file migration nằm trong `supabase/migrations/`:
 
 | Topic | Chiều | Nội dung |
 |---|---|---|
-| `bgx/evt` | ESP32 → ĐT | Sự kiện: quẹt thẻ, xác thực bảo vệ, khẩn cấp |
-| `bgx/cmd` | ĐT → ESP32 | Lệnh: kết quả quẹt, mở cổng, số chỗ trống, chỉnh giờ, kết quả PIN |
+| `bgx/evt` | ESP32 → ĐT | Sự kiện: quẹt thẻ, xác thực bảo vệ, đăng ký vân tay xong, chấm công, khẩn cấp |
+| `bgx/cmd` | ĐT → ESP32 | Lệnh: kết quả quẹt, mở cổng, số chỗ trống, chỉnh giờ, kết quả PIN, kết quả chấm công |
 | `bgx/esp` | ESP32 → ĐT | `1`/`0`: ESP32 online/offline (retained + Last Will) |
 | `bgx/phone/in`, `bgx/phone/out`, `bgx/phone/both` | ĐT → ESP32 | `1`/`0`: điện thoại của cổng đó online/offline (retained + Last Will) |
 
@@ -156,6 +162,7 @@ Nhờ dùng MQTT qua Internet, điện thoại camera dùng WiFi hay 4G đều �
 | Kết nối ESP32 và app | MQTT qua TLS. ESP32 kiểm tra chứng chỉ máy chủ bằng root CA nhúng sẵn |
 | Truy cập dữ liệu | RLS trong Supabase: chỉ tài khoản `staff` |
 | PIN bảo vệ | Băm bcrypt trong CSDL. ESP32 khoá 60 giây sau 5 lần nhập sai |
+| Đăng ký vân tay | Phải nhập đúng PIN của một bảo vệ mới đăng ký được, người lạ không tự thêm vân tay để mở cổng |
 | Ảnh biển số | Bucket private, xem qua link có hạn 1 giờ |
-| Khoá bí mật | `secrets.h` và `dart_defines.json` không đưa lên git |
+| Khoá bí mật | `secrets.h` và `dart_defines.json` **đang được đưa lên repo GitHub**. Nếu repo công khai, cần đổi mật khẩu MQTT, mật khẩu WiFi, token Plate Recognizer định kỳ, hoặc đưa 2 file trở lại `.gitignore` |
 | Hạn chế còn lại | Token Plate Recognizer và mật khẩu MQTT của app nằm trong file cài đặt app |
