@@ -1,9 +1,12 @@
 // ESP32 bãi giữ xe: 2 đầu đọc RFID, barrier cổng ra, OLED, phím, vân tay bảo vệ.
-// Giao tiếp với điện thoại camera qua MQTT (HiveMQ Cloud, TLS): ESP32 dùng WiFi bãi xe, ĐT dùng WiFi hay 4G đều được.
+// Giao tiếp với điện thoại camera qua MQTT (EMQX Cloud, TLS): ESP32 dùng WiFi bãi xe, ĐT dùng WiFi hay 4G đều được.
 //   ESP32 -> bgx/evt:  {"t":"scan","g":"in","uid":"..","id":5} · {"t":"auth","g":"out","pin":"1234"|"finger":3}
-//                      · {"t":"emg","g":"out","on":true}
+//                      · {"t":"emg","g":"out","on":true} · {"t":"enrolled","g":"out","id":3}
+//                      (auth có thêm "for":"enroll" khi PIN dùng để đăng ký vân tay, phím B)
+//                      · {"t":"att","g":"out","finger":3|"pin":"1234"} (chấm công, phím C)
 //   ĐT -> bgx/cmd:     {"t":"res","id":5,"ok":true,"open":true,"l1":"..","l2":".."} · {"t":"open"}
-//                      · {"t":"st","free":37,"cap":50} · {"t":"time","ts":<giây local>} · {"t":"auth","ok":true}
+//                      · {"t":"st","free":37,"cap":50} · {"t":"time","ts":<giây local>} · {"t":"auth","ok":true,"gid":2}
+//                      · {"t":"attres","ok":true,"l1":"VAO CA","l2":"Tuan 06:05 tre 5p"}
 //   Online/offline (retained + LWT, "1"/"0"): bgx/esp (ESP32), bgx/phone/in|out|both (từng ĐT).
 // Điện thoại lo phần Supabase. Nút khẩn cấp và vân tay mở cổng cục bộ, không cần mạng.
 #include <Arduino.h>
@@ -81,6 +84,8 @@ uint32_t msgUntil = 0, barrierCloseAt = 0, lastDraw = 0, lastFp = 0;
 bool emergency = false, emergencyLast = false, fpOk = false;
 uint32_t emergencyChangedAt = 0;
 bool authMode = false;
+char authFor = 'o';  // phím vừa bấm quyết định PIN/vân tay dùng để: 'o' mở cổng (A), 'e' đăng ký vân tay (B), 'c' chấm công (C)
+int enrollId = 0;  // >0: chờ loop() chạy đăng ký vân tay vào ô này (không chạy trong callback MQTT)
 uint32_t authUntil = 0, pinLockUntil = 0, pinSentAt = 0;
 String pinBuf;
 int pinFails = 0;
@@ -321,6 +326,7 @@ void checkFinger() {
     if ((fpOk = finger.verifyPassword())) Serial.println("[boot] AS608 da tra loi");
     return;
   }
+  if (authMode && authFor == 'e') return;  // đang nhập PIN để đăng ký: đặt tay không được mở cổng
   if (millis() - lastFp < 200) return;
   lastFp = millis();
   if (finger.getImage() != FINGERPRINT_OK) return;
@@ -328,6 +334,16 @@ void checkFinger() {
     showMsg("Van tay sai");
     beep(3);
     return;
+  }
+  if (authMode && authFor == 'c') {  // chấm công: không mở cổng, ĐT ghi vào/ra ca rồi trả attres
+    if (!phoneConnected("out")) return showMsg("Mat ket noi DT", "Chua cham duoc");
+    JsonDocument ev;
+    ev["t"] = "att";
+    ev["g"] = "out";
+    ev["finger"] = finger.fingerID;
+    notify(ev);
+    pinSentAt = millis();  // dùng chung bộ đếm chờ ĐT trả lời với PIN
+    return showMsg("Dang cham cong", "Van tay #" + String(finger.fingerID));
   }
   // Vân tay đã khớp mẫu trong AS608 -> mở ngay; ĐT chỉ ghi log + đóng lượt bị từ chối gần nhất.
   grantLocal("Van tay #" + String(finger.fingerID));
@@ -341,21 +357,27 @@ void checkFinger() {
 
 void submitPin() {
   if (millis() < pinLockUntil) return showMsg("Tam khoa", "Thu lai sau 60s");
-  if (!phoneConnected("out")) return showMsg("Mat ket noi DT", "Dung van tay");
+  if (!phoneConnected("out")) return showMsg("Mat ket noi DT", authFor == 'o' ? "Dung van tay" : "Can DT de kiem PIN");
+  if (authFor == 'e' && !fpOk) return showMsg("Loi cam bien", "Van tay khong tra loi");
   JsonDocument ev;
-  ev["t"] = "auth";
+  ev["t"] = authFor == 'c' ? "att" : "auth";
   ev["g"] = "out";
   ev["pin"] = pinBuf;  // đi qua TLS tới broker
+  if (authFor == 'e') ev["for"] = "enroll";
   notify(ev);
   pinSentAt = millis();
   showMsg("Dang kiem tra", "PIN...");
 }
 
-void onPinResult(bool ok) {
+void onPinResult(bool ok, int guardId) {
   pinSentAt = 0;
   if (ok) {
     pinFails = 0;
-    return grantLocal("PIN bao ve");
+    if (authFor != 'e') return grantLocal("PIN bao ve");
+    authMode = false;
+    pinBuf = "";
+    enrollId = guardId;  // loop() chạy đăng ký, vì hàm này đang nằm trong callback MQTT
+    return;
   }
   pinBuf = "";
   beep(3);
@@ -368,17 +390,74 @@ void onPinResult(bool ok) {
   showMsg("Sai PIN", "Nhap lai roi #");
 }
 
+// ---------- Đăng ký vân tay (phím B -> PIN bảo vệ -> đặt tay 2 lần) ----------
+
+void checkEmergency();
+
+/// Chờ đặt tay (present) hoặc nhấc tay (!present). Trong lúc chờ vẫn giữ MQTT, nút khẩn cấp, OLED.
+/// Hết giờ hoặc bấm D -> false.
+bool waitFinger(bool present, uint32_t ms) {
+  int lastCode = -1;
+  for (uint32_t until = millis() + ms; millis() < until; delay(50)) {
+    int code = finger.getImage();
+    if (code != lastCode) Serial.printf("[vantay] getImage = %d\n", lastCode = code);  // 0 OK, 2 chưa có tay, 1/3 lỗi
+    if ((code == FINGERPRINT_OK) == present) return true;
+    if (keypad.getChar() == 'D') return false;
+    msgUntil = millis() + 1000;  // giữ lời nhắc trên OLED suốt lúc chờ
+    mqttLoop();
+    checkEmergency();
+    draw();
+  }
+  return false;
+}
+
+/// Lấy 2 ảnh cùng một ngón, ghép mẫu, lưu vào ô id của AS608. Trả về lý do lỗi, nullptr = thành công.
+const char *enrollSteps(int id) {
+  finger.getParameters();
+  Serial.printf("[vantay] dang ky o %d, suc chua %d\n", id, finger.capacity);
+  if (id < 1 || id > finger.capacity) return "ID vuot suc chua";
+  for (int n = 1; n <= 2; n++) {
+    showMsg(n == 1 ? "Dat ngon tay" : "Dat lai ngon", "Lan " + String(n) + "/2 - D: huy");
+    if (!waitFinger(true, 15000)) return "Het gio / da huy";
+    if (finger.image2Tz(n) != FINGERPRINT_OK) return "Anh mo, thu lai";
+    beep(1, 30);
+    showMsg("Nhac tay ra");
+    waitFinger(false, 10000);
+  }
+  if (finger.createModel() != FINGERPRINT_OK) return "2 lan khong khop";
+  if (finger.storeModel(id) != FINGERPRINT_OK) return "Loi luu mau";
+  return nullptr;
+}
+
+void enrollFinger(int id) {
+  const char *err = enrollSteps(id);
+  Serial.printf("[vantay] ket qua: %s\n", err ? err : "OK");
+  if (err) showMsg("DK THAT BAI", err);
+  else showMsg("DA DANG KY", "Van tay #" + String(id));
+  beep(err ? 3 : 1);
+  if (err || !phoneConnected("out")) return;  // không có ĐT: mẫu đã lưu, nhập ID vân tay tay trong app
+  JsonDocument ev;
+  ev["t"] = "enrolled";
+  ev["g"] = "out";
+  ev["id"] = id;
+  notify(ev);
+}
+
+const char *authTitle() { return authFor == 'e' ? "DK van tay" : authFor == 'c' ? "Cham cong" : "Mo cong ra"; }
+
 void checkKeypad() {
   char k = keypad.getChar();
   if (k == lastKey) return;  // chỉ xử lý lúc vừa nhấn
   lastKey = k;
   if (k == 'N' || k == 'F') return;
   beep(1, 30);
-  if (k == 'A') {
+  // A/B luôn bắt đầu lại; C chỉ bắt đầu chấm công khi chưa nhập PIN (đang nhập thì C = xoá 1 số).
+  if (k == 'A' || k == 'B' || (k == 'C' && !authMode)) {
     authMode = true;
+    authFor = k == 'A' ? 'o' : k == 'B' ? 'e' : 'c';
     authUntil = millis() + AUTH_WINDOW_MS;
     pinBuf = "";
-    return showMsg("Mo cong ra", "Van tay hoac PIN #");
+    return showMsg(authTitle(), authFor == 'e' ? "PIN bao ve roi #" : "Van tay hoac PIN #");
   }
   if (!authMode) return;
   if (k == 'D') {
@@ -386,10 +465,11 @@ void checkKeypad() {
     return showMsg("Da huy");
   }
   if (k == '#') return submitPin();
-  if (isDigit(k) && pinBuf.length() < 8) {
-    pinBuf += k;
-    showMsg("Mo cong ra", "PIN: " + String("********").substring(0, pinBuf.length()));
-  }
+  if (k == 'C' && pinBuf.length()) pinBuf.remove(pinBuf.length() - 1);  // xoá 1 số
+  if (k == '*') pinBuf = "";                                             // xoá hết
+  if (isDigit(k) && pinBuf.length() < 8) pinBuf += k;
+  authUntil = millis() + AUTH_WINDOW_MS;  // còn bấm phím thì chưa hết giờ
+  showMsg(authTitle(), "PIN: " + String("********").substring(0, pinBuf.length()));
 }
 
 // ---------- Khẩn cấp ----------
@@ -435,7 +515,15 @@ void handleCmd(const char *s) {
   } else if (!strcmp(t, "time")) {
     rtc.adjust(DateTime((uint32_t)(d["ts"] | 0UL)));
   } else if (!strcmp(t, "auth")) {
-    if (pinSentAt) onPinResult(d["ok"] | false);  // bỏ qua nếu không có PIN nào đang chờ
+    if (pinSentAt) onPinResult(d["ok"] | false, d["gid"] | 0);  // bỏ qua nếu không có PIN nào đang chờ
+  } else if (!strcmp(t, "attres")) {  // kết quả chấm công
+    bool ok = d["ok"] | false;
+    pinSentAt = 0;
+    if (ok) pinFails = 0;
+    authMode = false;
+    pinBuf = "";
+    showMsg(d["l1"] | "", d["l2"] | "");
+    beep(ok ? 1 : 3);
   }
 }
 
@@ -486,6 +574,11 @@ void setup() {
 
 void loop() {
   mqttLoop();  // nhận lệnh từ ĐT -> handleCmd
+  if (enrollId) {
+    int id = enrollId;
+    enrollId = 0;
+    enrollFinger(id);
+  }
 
   checkEmergency();
   checkFinger();

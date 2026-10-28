@@ -17,7 +17,7 @@ App quản lý: tổng quan, lịch sử + doanh thu, thẻ, bảo vệ, giá
 
 ## 1. Supabase
 
-1. Tạo project, mở **SQL Editor**, chạy `supabase/migrations/0001_init.sql`.
+1. Tạo project, mở **SQL Editor**, chạy lần lượt các file trong `supabase/migrations/` (`0001_init.sql` → `0004_attendance.sql`).
 2. **Authentication → Sign In / Providers**: tắt *Allow new users to sign up* (chỉ admin tạo tài khoản).
 3. **Authentication → Users → Add user**, tạo ít nhất:
    - một tài khoản cho nhân viên (dùng chung cho app quản lý và 2 ĐT camera, hoặc tạo riêng từng người);
@@ -69,7 +69,7 @@ pio run -t upload && pio device monitor
 
 - **Đối chiếu `src/pins.h` với dây thật trước khi nạp.** Bảng chân được đọc lại từ sơ đồ.
 - Cần hiệu chỉnh trên phần cứng thật: `SERVO_OPEN_DEG` / `SERVO_CLOSE_DEG`, `KEYMAP` (nếu phím bấm ra sai ký tự), `EMERGENCY_ACTIVE`.
-- Đăng ký vân tay bảo vệ: nạp sketch mẫu `enroll` của thư viện *Adafruit Fingerprint* một lần, ghi lại ID, rồi nhập ID đó trong app (Cài đặt → Bảo vệ).
+- Đăng ký vân tay bảo vệ: tạo bảo vệ và đặt PIN trong app (Cài đặt → Bảo vệ), rồi ở ESP32 bấm **B** → PIN của bảo vệ đó → **#**, đặt cùng một ngón tay 2 lần. Vân tay lưu vào AS608 ở ô số = ID bảo vệ, app tự điền ID vân tay. Cần ĐT cổng ra đang chạy để kiểm tra PIN.
 - `src/ca_roots.h` chứa root CA của Let's Encrypt (ISRG X1, X2), dùng cho TLS tới HiveMQ Cloud.
 - Dòng 2 của OLED: `Mat WiFi` → kiểm tra WiFi bãi; `Mat may chu MQTT` → kiểm tra tài khoản/URL HiveMQ; `Cho DT ket noi` → chưa có ĐT camera nào mở app.
 
@@ -78,7 +78,9 @@ pio run -t upload && pio device monitor
 |---|---|
 | Quẹt thẻ hợp lệ | 1 tiếng bíp, OLED hiện biển số; cổng ra thì barrier mở 5s |
 | Bị từ chối (lệch biển, bãi đầy, thẻ lạ...) | 3 tiếng bíp, OLED hiện lý do |
-| Bảo vệ mở tay | Quét vân tay bất kỳ lúc nào, hoặc **A** → nhập PIN → **#**. **D** = huỷ. Sai PIN 5 lần thì khoá 60s |
+| Bảo vệ mở tay | Quét vân tay bất kỳ lúc nào, hoặc **A** → nhập PIN → **#**. **C** = xoá 1 số, `*` = xoá hết, **D** = huỷ. Sai PIN 5 lần thì khoá 60s |
+| Đăng ký vân tay | **B** → PIN bảo vệ → **#** → đặt ngón tay, nhấc ra, đặt lại. **D** = huỷ. OLED báo `DA DANG KY` hoặc lý do lỗi |
+| Chấm công vào/ra ca | **C** → đặt vân tay, hoặc nhập PIN → **#**. Chưa trong ca thì vào ca gần nhất theo lịch, đang trong ca thì ra ca. OLED báo `VAO CA` / `RA CA`, tên, giờ, số phút trễ/sớm. Xem bảng công ở app: Bảo vệ → Bảng công |
 | Nút khẩn cấp | Bấm lần 1: mở và giữ barrier. Bấm lần 2: đóng. Không cần mạng |
 | Mất thẻ | App Quản lý → Tổng quan → chạm vào xe → *Cho xe ra + mở cổng* |
 

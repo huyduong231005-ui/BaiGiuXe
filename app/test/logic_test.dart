@@ -138,4 +138,71 @@ void main() {
       expect(d.fee, isNotNull);
     });
   });
+
+  group('nearestShift', () {
+    final defs = [
+      shiftDefFromRow({'id': 1, 'name': 'Sang', 'start_time': '06:00:00', 'end_time': '14:00:00'}),
+      shiftDefFromRow({'id': 2, 'name': 'Chieu', 'start_time': '14:00:00', 'end_time': '22:00:00'}),
+      shiftDefFromRow({'id': 3, 'name': 'Dem', 'start_time': '22:00:00', 'end_time': '06:00:00'}),
+    ];
+
+    test('vào trễ 10 phút -> ca sáng, mốc 06:00 cùng ngày', () {
+      final s = nearestShift(defs, DateTime(2026, 10, 28, 6, 10))!;
+      expect(s.def.name, 'Sang');
+      expect(s.start, DateTime(2026, 10, 28, 6));
+      expect(s.end, DateTime(2026, 10, 28, 14));
+    });
+
+    test('vào sớm 13:45 -> ca chiều', () {
+      expect(nearestShift(defs, DateTime(2026, 10, 28, 13, 45))!.def.name, 'Chieu');
+    });
+
+    test('ca đêm kết thúc 06:00 hôm sau', () {
+      final s = nearestShift(defs, DateTime(2026, 10, 28, 21, 50))!;
+      expect(s.def.name, 'Dem');
+      expect(s.end, DateTime(2026, 10, 29, 6));
+    });
+
+    test('vào trễ sau nửa đêm vẫn thuộc ca đêm hôm trước', () {
+      final defsNight = [shiftDefFromRow({'id': 3, 'name': 'Dem', 'start_time': '23:30', 'end_time': '07:30'})];
+      final s = nearestShift(defsNight, DateTime(2026, 10, 29, 0, 15))!;
+      expect(s.start, DateTime(2026, 10, 28, 23, 30));
+    });
+
+    test('chưa khai báo ca -> null', () {
+      expect(nearestShift(const [], DateTime(2026, 10, 28, 8)), isNull);
+    });
+  });
+
+  group('attStat', () {
+    const base = {'shift_start': '2026-10-28T06:00:00Z', 'shift_end': '2026-10-28T14:00:00Z'};
+
+    test('trễ 12 phút, về sớm 5 phút, làm 7h43', () {
+      final s = attStat({...base, 'time_in': '2026-10-28T06:12:00Z', 'time_out': '2026-10-28T13:55:00Z'});
+      expect((s.lateMin, s.earlyMin, s.workedMin, s.open), (12, 5, 463, false));
+    });
+
+    test('vào sớm, ra muộn: không trễ không sớm', () {
+      final s = attStat({...base, 'time_in': '2026-10-28T05:50:00Z', 'time_out': '2026-10-28T14:10:00Z'});
+      expect((s.lateMin, s.earlyMin), (0, 0));
+    });
+
+    test('đang trong ca: chưa tính giờ', () {
+      final s = attStat({...base, 'time_in': '2026-10-28T06:00:00Z', 'time_out': null});
+      expect((s.open, s.workedMin), (true, 0));
+    });
+
+    test('quên chấm ra: không tính giờ làm, không tính về sớm', () {
+      final s = attStat(
+          {...base, 'time_in': '2026-10-28T06:00:00Z', 'time_out': '2026-10-28T14:00:00Z', 'method_out': 'auto'});
+      expect((s.missingOut, s.workedMin, s.earlyMin), (true, 0, 0));
+    });
+  });
+
+  test('oledName lấy tên gọi, bỏ dấu', () {
+    expect(oledName('Nguyễn Văn Tuấn'), 'Tuan');
+    expect(oledName('Trần Đức'), 'Duc');
+    expect(oledName('  Lê Thị Ưởng  '), 'Uong');
+    expect(oledName('Hùng'), 'Hung');
+  });
 }

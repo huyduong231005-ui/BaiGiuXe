@@ -126,3 +126,76 @@ Decision decideExit({
 
 int feeFor(Rec session, Rec? card, DateTime now, FeeConfig cfg) =>
     calcFee(DateTime.parse(session['time_in'] as String), now, cfg, monthly: card?['kind'] == 'monthly');
+
+// ---------- Chấm công bảo vệ ----------
+
+/// Một ca trong lịch (bảng shift_defs). Giờ tính bằng phút từ 00:00; end <= start = ca qua đêm.
+typedef ShiftDef = ({int id, String name, int startMin, int endMin});
+
+int _minutes(String hhmm) {
+  final p = hhmm.split(':');
+  return int.parse(p[0]) * 60 + int.parse(p[1]);
+}
+
+ShiftDef shiftDefFromRow(Rec r) => (
+      id: r['id'] as int,
+      name: r['name'] as String,
+      startMin: _minutes(r['start_time'] as String),
+      endMin: _minutes(r['end_time'] as String),
+    );
+
+/// Ca có giờ bắt đầu gần [t] nhất, xét cả hôm trước và hôm sau (vào sớm trước nửa đêm cho ca 00:00,
+/// hay chấm ca đêm lúc 22:00). Trả về ca và mốc bắt đầu/kết thúc thật, null nếu chưa khai báo ca nào.
+({ShiftDef def, DateTime start, DateTime end})? nearestShift(List<ShiftDef> defs, DateTime t) {
+  ({ShiftDef def, DateTime start, DateTime end})? best;
+  for (final d in defs) {
+    final len = (d.endMin - d.startMin) % 1440 == 0 ? 1440 : (d.endMin - d.startMin) % 1440;
+    for (final day in [-1, 0, 1]) {
+      final start = DateTime(t.year, t.month, t.day + day, d.startMin ~/ 60, d.startMin % 60);
+      if (best == null || t.difference(start).abs() < t.difference(best.start).abs()) {
+        best = (def: d, start: start, end: start.add(Duration(minutes: len)));
+      }
+    }
+  }
+  return best;
+}
+
+/// Quá lâu chưa chấm ra (quên) thì lần chấm sau tính là vào ca mới.
+const maxShiftLength = Duration(hours: 16);
+
+String hm(DateTime t) => '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
+
+const _vnFrom = 'àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ';
+const _vnTo = 'aaaaaaaaaaaaaaaaaeeeeeeeeeeeiiiiiooooooooooooooooouuuuuuuuuuuyyyyyd';
+
+/// Tên gọi ngắn không dấu cho OLED (font chỉ có ASCII): "Nguyễn Văn Tuấn" -> "Tuan".
+String oledName(String full) {
+  final w = full.trim().split(RegExp(r'\s+')).last;
+  final out = StringBuffer();
+  for (final ch in w.split('')) {
+    final lower = ch.toLowerCase();
+    final i = _vnFrom.indexOf(lower);
+    final base = i < 0 ? lower : _vnTo[i];
+    out.write(ch == lower ? base : base.toUpperCase());
+  }
+  return out.toString();
+}
+
+/// Số liệu một lượt chấm công (một dòng attendance). Quên chấm ra (method_out = auto) không tính giờ làm
+/// và không tính về sớm vì giờ ra là giờ hệ thống tự đóng.
+typedef AttStat = ({int lateMin, int earlyMin, int workedMin, bool open, bool missingOut});
+
+AttStat attStat(Rec r) {
+  DateTime? t(String k) => r[k] == null ? null : DateTime.parse(r[k] as String);
+  final inT = t('time_in')!, outT = t('time_out'), start = t('shift_start'), end = t('shift_end');
+  final missing = r['method_out'] == 'auto';
+  final counted = outT != null && !missing;
+  int pos(Duration d) => d.isNegative ? 0 : d.inMinutes;
+  return (
+    lateMin: start == null ? 0 : pos(inT.difference(start)),
+    earlyMin: counted && end != null ? pos(end.difference(outT)) : 0,
+    workedMin: counted ? pos(outT.difference(inT)) : 0,
+    open: outT == null,
+    missingOut: missing,
+  );
+}

@@ -152,6 +152,10 @@ class GateStation {
           await _scanGuarded(ev);
         case 'auth':
           await _auth(ev);
+        case 'enrolled':
+          await _enrolled(ev['id'] as int);
+        case 'att':
+          await _attendance(ev);
         case 'emg':
           await _log('out', {'kind': 'emergency', 'status': 'done', 'message': ev['on'] == true ? 'Bat khan cap' : 'Tat khan cap'});
       }
@@ -268,12 +272,17 @@ class GateStation {
   Future<void> _auth(Rec ev) async {
     final pin = ev['pin'] as String?;
     final finger = ev['finger'] as int?;
+    final forEnroll = ev['for'] == 'enroll'; // phím B: PIN đúng thì ESP32 đăng ký vân tay vào ô = ID bảo vệ
     final guardId = await db.rpc('find_guard', params: {'p_pin': pin, 'p_finger': finger}) as int?;
     if (pin != null) {
-      await link.send({'t': 'auth', 'ok': guardId != null});
+      await link.send({'t': 'auth', 'ok': guardId != null, 'gid': guardId});
       if (guardId == null) {
         last.value = 'Sai PIN bao ve';
-        await _log('out', {'kind': 'override', 'status': 'denied', 'message': 'Sai PIN'});
+        await _log('out', {'kind': 'override', 'status': 'denied', 'message': forEnroll ? 'Sai PIN (dang ky van tay)' : 'Sai PIN'});
+        return;
+      }
+      if (forEnroll) {
+        last.value = 'Bao ve #$guardId dang dang ky van tay tai ESP32...';
         return;
       }
     }
@@ -292,6 +301,70 @@ class GateStation {
     }
     await _log('out', {'kind': 'override', 'status': 'done', 'guard_id': guardId, 'message': msg});
     last.value = 'MO THU CONG | $msg';
+  }
+
+  /// ESP32 vừa lưu vân tay vào ô id (= ID bảo vệ): gán cho bảo vệ đó, gỡ khỏi bảo vệ khác đang giữ số này
+  /// (finger_id là unique).
+  Future<void> _enrolled(int id) async {
+    await db.from('guards').update({'finger_id': null}).eq('finger_id', id).neq('id', id);
+    await db.from('guards').update({'finger_id': id}).eq('id', id);
+    await _log('out', {'kind': 'override', 'status': 'done', 'guard_id': id, 'message': 'Dang ky van tay #$id'});
+    last.value = 'Da dang ky van tay cho bao ve #$id';
+  }
+
+  /// Chấm công (phím C): bảo vệ chưa trong ca -> vào ca gần nhất theo lịch; đang trong ca -> ra ca.
+  /// Ca mở quá [maxShiftLength] coi như quên chấm ra: đóng ở giờ hết ca rồi mở ca mới.
+  Future<void> _attendance(Rec ev) async {
+    final pin = ev['pin'] as String?;
+    final finger = ev['finger'] as int?;
+    final gid = await db.rpc('find_guard', params: {'p_pin': pin, 'p_finger': finger}) as int?;
+    if (gid == null) {
+      if (pin != null) {
+        await link.send({'t': 'auth', 'ok': false}); // ESP32 đếm sai PIN như lúc mở cổng
+        await _log('out', {'kind': 'override', 'status': 'denied', 'message': 'Sai PIN (cham cong)'});
+      } else {
+        await link.send({'t': 'attres', 'ok': false, 'l1': 'KHONG RO', 'l2': 'Van tay #$finger chua gan'});
+      }
+      last.value = 'Cham cong: khong nhan ra bao ve';
+      return;
+    }
+    final now = DateTime.now();
+    final method = pin != null ? 'pin' : 'finger';
+    final guard = await db.from('guards').select('name').eq('id', gid).single();
+    final name = oledName(guard['name'] as String);
+    final open = await db.from('attendance').select().eq('guard_id', gid).isFilter('time_out', null).maybeSingle();
+    final String l1, l2, logMsg;
+    if (open != null && now.difference(DateTime.parse(open['time_in'] as String)) < maxShiftLength) {
+      await db.from('attendance').update({'time_out': now.toUtc().toIso8601String(), 'method_out': method}).eq('id', open['id']);
+      final end = open['shift_end'] == null ? null : DateTime.parse(open['shift_end'] as String).toLocal();
+      final early = end == null ? 0 : end.difference(now).inMinutes;
+      l1 = 'RA CA';
+      l2 = '$name ${hm(now)}${early > 0 ? ' som ${early}p' : ''}';
+      logMsg = 'Ra ca: ${open['shift_name'] ?? '-'}${early > 0 ? ' (ve som ${early}p)' : ''}';
+    } else {
+      if (open != null) {
+        await db
+            .from('attendance')
+            .update({'time_out': open['shift_end'] ?? open['time_in'], 'method_out': 'auto'}).eq('id', open['id']);
+      }
+      final defs = [for (final r in await db.from('shift_defs').select()) shiftDefFromRow(r)];
+      final s = nearestShift(defs, now);
+      await db.from('attendance').insert({
+        'guard_id': gid,
+        'shift_id': s?.def.id,
+        'shift_name': s?.def.name,
+        'shift_start': s?.start.toUtc().toIso8601String(),
+        'shift_end': s?.end.toUtc().toIso8601String(),
+        'method_in': method,
+      });
+      final late = s == null ? 0 : now.difference(s.start).inMinutes;
+      l1 = 'VAO CA';
+      l2 = '$name ${hm(now)}${late > 0 ? ' tre ${late}p' : ''}';
+      logMsg = 'Vao ca: ${s?.def.name ?? '-'}${late > 0 ? ' (tre ${late}p)' : ''}';
+    }
+    await link.send({'t': 'attres', 'ok': true, 'l1': l1, 'l2': l2});
+    await _log('out', {'kind': 'override', 'status': 'done', 'guard_id': gid, 'message': logMsg});
+    last.value = 'CHAM CONG | ${guard['name']} | $logMsg';
   }
 
   Future<void> _openFromApp(Rec row) async {

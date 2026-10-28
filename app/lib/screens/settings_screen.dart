@@ -20,7 +20,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   final priceDay = TextEditingController();
   final priceNight = TextEditingController();
   final nightMark = TextEditingController();
-  List<Rec> guards = [];
+  List<Rec> shifts = [];
 
   @override
   void initState() {
@@ -31,15 +31,81 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _load() async {
     try {
       final s = await _db.from('settings').select().single();
-      final g = await _db.from('guards').select('id, name, finger_id, pin_hash').order('id');
       if (!mounted) return;
       setState(() {
         capacity.text = '${s['capacity']}';
         priceDay.text = '${s['price_day']}';
         priceNight.text = '${s['price_night']}';
         nightMark.text = (s['night_mark'] as String).substring(0, 5);
-        guards = g;
       });
+    } catch (e) {
+      if (mounted) showError(context, e);
+    }
+    try {
+      final sh = await _db.from('shift_defs').select().order('start_time');
+      if (mounted) setState(() => shifts = sh);
+    } catch (e) {
+      debugPrint('[settings] chua co bang shift_defs (chay migration 0004): $e');
+    }
+  }
+
+  /// Thêm / sửa một ca trực. Giờ kết thúc nhỏ hơn giờ bắt đầu = ca qua đêm.
+  Future<void> _editShift([Rec? sh]) async {
+    TimeOfDay parse(String? v, int defHour) {
+      if (v == null) return TimeOfDay(hour: defHour, minute: 0);
+      final p = v.split(':');
+      return TimeOfDay(hour: int.parse(p[0]), minute: int.parse(p[1]));
+    }
+
+    final name = TextEditingController(text: sh?['name'] as String?);
+    var start = parse(sh?['start_time'] as String?, 6), end = parse(sh?['end_time'] as String?, 14);
+    String fmt(TimeOfDay t) => '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (c) => StatefulBuilder(
+        builder: (c, setD) => AlertDialog(
+          title: Text(sh == null ? 'Thêm ca' : 'Sửa ca'),
+          content: Column(mainAxisSize: MainAxisSize.min, children: [
+            TextField(controller: name, decoration: const InputDecoration(labelText: 'Tên ca', prefixIcon: Icon(Icons.badge_outlined))),
+            fieldGap,
+            Row(children: [
+              for (final (label, isStart) in [('Bắt đầu', true), ('Kết thúc', false)])
+                Expanded(
+                  child: Padding(
+                    padding: EdgeInsets.only(right: isStart ? 6 : 0, left: isStart ? 0 : 6),
+                    child: OutlinedButton(
+                      onPressed: () async {
+                        final v = await showTimePicker(context: c, initialTime: isStart ? start : end);
+                        if (v != null) setD(() => isStart ? start = v : end = v);
+                      },
+                      child: Text('$label\n${fmt(isStart ? start : end)}', textAlign: TextAlign.center),
+                    ),
+                  ),
+                ),
+            ]),
+          ]),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Huỷ')),
+            FilledButton(onPressed: () => Navigator.pop(c, true), child: const Text('Lưu')),
+          ],
+        ),
+      ),
+    );
+    if (ok != true || !mounted) return;
+    if (name.text.trim().isEmpty) return showError(context, 'Cần nhập tên ca');
+    final row = {'name': name.text.trim(), 'start_time': fmt(start), 'end_time': fmt(end)};
+    try {
+      sh == null ? await _db.from('shift_defs').insert(row) : await _db.from('shift_defs').update(row).eq('id', sh['id']);
+      _load();
+    } catch (e) {
+      if (mounted) showError(context, e);
+    }
+  }
+
+  Future<void> _deleteShift(Rec sh) async {
+    try {
+      await _db.from('shift_defs').delete().eq('id', sh['id']); // bảng công cũ vẫn giữ tên ca đã chép
+      _load();
     } catch (e) {
       if (mounted) showError(context, e);
     }
@@ -61,58 +127,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Đã lưu')));
     } catch (e) {
       if (mounted) showError(context, e);
-    }
-  }
-
-  Future<void> _editGuard([Rec? g]) async {
-    final name = TextEditingController(text: g?['name'] as String?);
-    final finger = TextEditingController(text: g?['finger_id']?.toString());
-    final pin = TextEditingController();
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (c) => AlertDialog(
-        title: Text(g == null ? 'Thêm bảo vệ' : 'Sửa bảo vệ'),
-        content: Column(mainAxisSize: MainAxisSize.min, children: [
-          TextField(controller: name, decoration: const InputDecoration(labelText: 'Tên')),
-          fieldGap,
-          TextField(
-            controller: finger,
-            decoration: const InputDecoration(labelText: 'ID vân tay trên AS608 (1-300)'),
-            keyboardType: TextInputType.number,
-          ),
-          fieldGap,
-          TextField(
-            controller: pin,
-            decoration: InputDecoration(labelText: g == null ? 'PIN (4-8 số)' : 'PIN mới (để trống = giữ nguyên)'),
-            keyboardType: TextInputType.number,
-            obscureText: true,
-          ),
-        ]),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Huỷ')),
-          FilledButton(onPressed: () => Navigator.pop(c, true), child: const Text('Lưu')),
-        ],
-      ),
-    );
-    if (ok != true || name.text.trim().isEmpty) return;
-    try {
-      final row = {'name': name.text.trim(), 'finger_id': int.tryParse(finger.text.trim())};
-      final id = g == null
-          ? (await _db.from('guards').insert(row).select('id').single())['id']
-          : (await _db.from('guards').update(row).eq('id', g['id']).select('id').single())['id'];
-      if (pin.text.isNotEmpty) await _db.rpc('set_guard_pin', params: {'p_id': id, 'p_pin': pin.text});
-      _load();
-    } catch (e) {
-      if (mounted) showError(context, e);
-    }
-  }
-
-  Future<void> _deleteGuard(Rec g) async {
-    try {
-      await _db.from('guards').delete().eq('id', g['id']);
-      _load();
-    } catch (e) {
-      if (mounted) showError(context, 'Bảo vệ đã có lịch sử mở cổng, không xoá được. $e');
     }
   }
 
@@ -143,19 +157,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
       FilledButton.icon(onPressed: _saveSettings, icon: const Icon(Icons.save_outlined), label: const Text('Lưu cài đặt')),
       const SizedBox(height: 24),
       Row(children: [
-        Expanded(child: Text('Bảo vệ', style: header)),
-        TextButton.icon(onPressed: _editGuard, icon: const Icon(Icons.add), label: const Text('Thêm')),
+        Expanded(child: Text('Ca trực (chấm công)', style: header)),
+        TextButton.icon(onPressed: _editShift, icon: const Icon(Icons.add), label: const Text('Thêm ca')),
       ]),
-      for (final g in guards)
-        Card(
-          child: ListTile(
-            leading: const CircleAvatar(child: Icon(Icons.security)),
-            title: Text('#${g['id']} ${g['name']}'),
-            subtitle: Text('Vân tay: ${g['finger_id'] ?? '-'} · PIN: ${g['pin_hash'] == null ? 'chưa đặt' : 'đã đặt'}'),
-            onTap: () => _editGuard(g),
-            trailing: IconButton(icon: const Icon(Icons.delete_outline), onPressed: () => _deleteGuard(g)),
-          ),
-        ),
+      Card(
+        child: Column(children: [
+          if (shifts.isEmpty) const ListTile(title: Text('Chưa có ca nào')),
+          for (final sh in shifts)
+            ListTile(
+              leading: const Icon(Icons.schedule),
+              title: Text(sh['name'] as String),
+              subtitle: Text('${(sh['start_time'] as String).substring(0, 5)} → ${(sh['end_time'] as String).substring(0, 5)}'),
+              onTap: () => _editShift(sh),
+              trailing: IconButton(icon: const Icon(Icons.delete_outline), tooltip: 'Xoá ca', onPressed: () => _deleteShift(sh)),
+            ),
+        ]),
+      ),
       const SizedBox(height: 24),
       Text('Thiết bị', style: header),
       const SizedBox(height: 8),

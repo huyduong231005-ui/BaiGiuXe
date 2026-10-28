@@ -7,6 +7,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'screens/camera_screen.dart';
 import 'screens/cards_screen.dart';
 import 'screens/dashboard_screen.dart';
+import 'screens/guards_screen.dart';
 import 'screens/history_screen.dart';
 import 'screens/login_screen.dart';
 import 'screens/settings_screen.dart';
@@ -162,16 +163,19 @@ class _ManagerHomeState extends State<ManagerHome> {
             const DashboardScreen(),
             const HistoryScreen(),
             const CardsScreen(),
+            const GuardsScreen(),
             SettingsScreen(onChangeRole: widget.onChangeRole),
           ]),
         ),
         bottomNavigationBar: NavigationBar(
           selectedIndex: tab,
-          onDestinationSelected: (i) => i == 4 ? widget.onShowCamera!() : setState(() => tab = i),
+          onDestinationSelected: (i) => i == 5 ? widget.onShowCamera!() : setState(() => tab = i),
+          labelBehavior: NavigationDestinationLabelBehavior.onlyShowSelected, // 6 mục: hiện hết nhãn thì chật
           destinations: [
             const NavigationDestination(icon: Icon(Icons.local_parking), label: 'Tổng quan'),
             const NavigationDestination(icon: Icon(Icons.history), label: 'Lịch sử'),
             const NavigationDestination(icon: Icon(Icons.credit_card), label: 'Thẻ'),
+            const NavigationDestination(icon: Icon(Icons.security), label: 'Bảo vệ'),
             const NavigationDestination(icon: Icon(Icons.settings), label: 'Cài đặt'),
             if (widget.onShowCamera != null) const NavigationDestination(icon: Icon(Icons.videocam), label: 'Camera'),
           ],
