@@ -72,6 +72,8 @@ Future<void> setupGateCamera(CameraController camera) async {
 
 Future<Uint8List> shoot(CameraController camera) async => (await camera.takePicture()).readAsBytes();
 
+typedef ScanResult = ({DateTime at, String gate, String? plate, bool ok, String msg});
+
 /// Vai trò camera của một cổng: nhận sự kiện từ ESP32 qua MQTT, chụp + đọc biển, quyết định,
 /// trả kết quả cho ESP32 qua MQTT rồi mới ghi Supabase (không nằm trên đường chờ của cổng).
 class GateStation {
@@ -87,6 +89,10 @@ class GateStation {
   ValueNotifier<String> get status => link.status;
   final last = ValueNotifier<String>('Chua co xe');
   final busy = ValueNotifier<bool>(false); // true trong lúc xử lý một lượt quẹt thẻ
+  final history = ValueNotifier<List<ScanResult>>(const []); // mới nhất trước, để bảo vệ xem lại khi xe xếp hàng
+
+  void _addHistory(String g, String? plate, bool ok, String msg) =>
+      history.value = [(at: DateTime.now(), gate: g, plate: plate, ok: ok, msg: msg), ...history.value.take(19)];
 
   StreamSubscription<Rec>? _sub;
   RealtimeChannel? _openCh;
@@ -160,6 +166,7 @@ class GateStation {
       await _scan(ev);
     } catch (e) {
       last.value = 'Loi: $e';
+      _addHistory(ev['g'] as String, null, false, 'Loi he thong');
       await link.send({'t': 'res', 'id': ev['id'], 'ok': false, 'open': false, 'l1': 'TU CHOI', 'l2': 'Loi he thong'});
     } finally {
       busy.value = false;
@@ -229,6 +236,7 @@ class GateStation {
     });
     final tReply = sw.elapsedMilliseconds;
     if (!d.ok && g == 'out') _lastDenied = (uid: uid, plate: plate, path: path, at: now);
+    _addHistory(g, plate, d.ok, d.message);
     last.value = '${d.ok ? 'OK' : 'TU CHOI'} | the $uid | ${plate ?? '?'} | ${d.message}'
         '\nchup ${tShot}ms · OCR ${tOcr - tShot}ms · tra loi ESP32 sau ${tReply}ms';
     // Đọc được qua `adb logcat -s flutter` để đo tốc độ mà không cần nhìn màn hình.

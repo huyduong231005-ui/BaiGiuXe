@@ -29,13 +29,48 @@ Future<void> main() async {
   runApp(const App());
 }
 
+ThemeData _theme(Brightness b) {
+  final s = ColorScheme.fromSeed(seedColor: const Color(0xFF00796B), brightness: b);
+  final r12 = BorderRadius.circular(12);
+  return ThemeData(
+    colorScheme: s,
+    useMaterial3: true,
+    appBarTheme: AppBarTheme(centerTitle: true, backgroundColor: s.surface, scrolledUnderElevation: 1),
+    cardTheme: CardThemeData(
+      elevation: 0,
+      color: s.surfaceContainerLow,
+      margin: const EdgeInsets.symmetric(vertical: 4),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      clipBehavior: Clip.antiAlias,
+    ),
+    inputDecorationTheme: InputDecorationTheme(
+      filled: true,
+      fillColor: s.surfaceContainerHighest.withValues(alpha: 0.5),
+      border: OutlineInputBorder(borderRadius: r12, borderSide: BorderSide.none),
+      focusedBorder: OutlineInputBorder(borderRadius: r12, borderSide: BorderSide(color: s.primary, width: 2)),
+    ),
+    filledButtonTheme: FilledButtonThemeData(
+      style: FilledButton.styleFrom(minimumSize: const Size(0, 48), shape: RoundedRectangleBorder(borderRadius: r12)),
+    ),
+    outlinedButtonTheme: OutlinedButtonThemeData(
+      style: OutlinedButton.styleFrom(minimumSize: const Size(0, 48), shape: RoundedRectangleBorder(borderRadius: r12)),
+    ),
+    listTileTheme: ListTileThemeData(shape: RoundedRectangleBorder(borderRadius: r12)),
+    snackBarTheme: const SnackBarThemeData(behavior: SnackBarBehavior.floating),
+  );
+}
+
+/// Khoảng cách giữa các ô nhập liệu (ô nền đặc đứng sát nhau trông như một khối).
+const fieldGap = SizedBox(height: 12);
+
 class App extends StatelessWidget {
   const App({super.key});
 
   @override
   Widget build(BuildContext context) => MaterialApp(
         title: 'Bãi giữ xe',
-        theme: ThemeData(colorSchemeSeed: Colors.indigo, useMaterial3: true),
+        theme: _theme(Brightness.light),
+        darkTheme: _theme(Brightness.dark),
         home: StreamBuilder<AuthState>(
           stream: Supabase.instance.client.auth.onAuthStateChange,
           builder: (_, _) =>
@@ -67,31 +102,15 @@ class _RoleHomeState extends State<RoleHome> {
       'in' || 'out' || 'both' => CameraScreen(gate: role!, onExit: reset),
       'manager' => ManagerHome(onChangeRole: reset),
       _ => Scaffold(
-          appBar: AppBar(title: const Text('Chọn vai trò thiết bị')),
-          body: ListView(children: [
-            ListTile(
-              leading: const Icon(Icons.dashboard),
-              title: const Text('Quản lý'),
-              onTap: () => _set('manager'),
-            ),
+          appBar: AppBar(title: const Text('Thiết bị này dùng để')),
+          body: ListView(padding: const EdgeInsets.all(16), children: [
+            _RoleCard(Icons.dashboard, 'Quản lý', 'Xem xe trong bãi, lịch sử, thẻ, cài đặt', () => _set('manager')),
             // camera package không hỗ trợ macOS
             if (!Platform.isMacOS) ...[
-              ListTile(
-                leading: const Icon(Icons.login),
-                title: const Text('Camera cổng vào'),
-                onTap: () => _set('in'),
-              ),
-              ListTile(
-                leading: const Icon(Icons.logout),
-                title: const Text('Camera cổng ra'),
-                onTap: () => _set('out'),
-              ),
-              ListTile(
-                leading: const Icon(Icons.compare_arrows),
-                title: const Text('Camera cả 2 cổng'),
-                subtitle: const Text('Chỉ có 1 điện thoại cho cả cổng vào và cổng ra'),
-                onTap: () => _set('both'),
-              ),
+              _RoleCard(Icons.login, 'Camera cổng vào', 'Gắn cố định nhìn biển số xe vào', () => _set('in')),
+              _RoleCard(Icons.logout, 'Camera cổng ra', 'Gắn cố định nhìn biển số xe ra', () => _set('out')),
+              _RoleCard(Icons.compare_arrows, 'Camera cả 2 cổng', 'Chỉ có 1 điện thoại cho cả cổng vào và cổng ra',
+                  () => _set('both')),
             ],
           ]),
         ),
@@ -99,10 +118,35 @@ class _RoleHomeState extends State<RoleHome> {
   }
 }
 
+class _RoleCard extends StatelessWidget {
+  const _RoleCard(this.icon, this.title, this.subtitle, this.onTap);
+
+  final IconData icon;
+  final String title, subtitle;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final s = Theme.of(context).colorScheme;
+    return Card(
+      child: ListTile(
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        leading: CircleAvatar(
+            radius: 24, backgroundColor: s.primaryContainer, child: Icon(icon, color: s.onPrimaryContainer)),
+        title: Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
+        subtitle: Text(subtitle),
+        trailing: const Icon(Icons.chevron_right),
+        onTap: onTap,
+      ),
+    );
+  }
+}
+
 class ManagerHome extends StatefulWidget {
-  const ManagerHome({super.key, required this.onChangeRole});
+  const ManagerHome({super.key, required this.onChangeRole, this.onShowCamera});
 
   final VoidCallback onChangeRole;
+  final VoidCallback? onShowCamera; // có trên ĐT camera: thêm mục "Camera" ở thanh dưới
 
   @override
   State<ManagerHome> createState() => _ManagerHomeState();
@@ -123,12 +167,13 @@ class _ManagerHomeState extends State<ManagerHome> {
         ),
         bottomNavigationBar: NavigationBar(
           selectedIndex: tab,
-          onDestinationSelected: (i) => setState(() => tab = i),
-          destinations: const [
-            NavigationDestination(icon: Icon(Icons.local_parking), label: 'Tổng quan'),
-            NavigationDestination(icon: Icon(Icons.history), label: 'Lịch sử'),
-            NavigationDestination(icon: Icon(Icons.credit_card), label: 'Thẻ'),
-            NavigationDestination(icon: Icon(Icons.settings), label: 'Cài đặt'),
+          onDestinationSelected: (i) => i == 4 ? widget.onShowCamera!() : setState(() => tab = i),
+          destinations: [
+            const NavigationDestination(icon: Icon(Icons.local_parking), label: 'Tổng quan'),
+            const NavigationDestination(icon: Icon(Icons.history), label: 'Lịch sử'),
+            const NavigationDestination(icon: Icon(Icons.credit_card), label: 'Thẻ'),
+            const NavigationDestination(icon: Icon(Icons.settings), label: 'Cài đặt'),
+            if (widget.onShowCamera != null) const NavigationDestination(icon: Icon(Icons.videocam), label: 'Camera'),
           ],
         ),
       );

@@ -18,6 +18,9 @@
 #include <MFRC522DriverPinSimple.h>
 #include <I2CKeyPad.h>
 #include <Adafruit_SSD1306.h>
+#include <Fonts/FreeSansBold12pt7b.h>
+#include <Fonts/FreeSansBold9pt7b.h>
+#include <Fonts/FreeSans9pt7b.h>
 #include <RTClib.h>
 #include <Adafruit_Fingerprint.h>
 #include <ESP32Servo.h>
@@ -132,8 +135,12 @@ void mqttLoop() {
     return;
   }
   phoneIn = phoneOut = phoneBoth = false;
-  if (WiFi.status() != WL_CONNECTED || millis() - lastMqttTry < 5000) return;
+  if (millis() - lastMqttTry < 5000) return;
   lastMqttTry = millis();
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.printf("[wifi] chua ket noi, status %d\n", WiFi.status());  // 1 = không thấy tên WiFi, 4 = sai mật khẩu
+    return;
+  }
   // shortcut: bắt tay TLS chặn loop ~1-2s mỗi lần thử (tối đa 5s); tách sang task riêng nếu cần phím/còi phản hồi khi mất mạng.
   if (!mqtt.connect("bgx-esp32", MQTT_USER, MQTT_PASS, T_ESP, 1, true, "0")) {
     Serial.printf("[mqtt] ket noi loi %d\n", mqtt.state());
@@ -174,29 +181,44 @@ void beep(int times, int ms = 100) {
   }
 }
 
+/// In chữ căn giữa, đường chân chữ ở y, bằng font to nhất trong danh sách còn vừa 128px.
+/// nullptr = font mặc định 5x7 (toạ độ y của nó là đỉnh chữ, nên lùi lên 7px cho cùng chân chữ).
+void printFit(const String &s, int16_t y, std::initializer_list<const GFXfont *> fonts) {
+  int16_t x1, y1;
+  uint16_t w = 0, h;
+  const GFXfont *font = nullptr;
+  for (const GFXfont *f : fonts) {
+    font = f;
+    oled.setFont(f);
+    oled.getTextBounds(s, 0, y, &x1, &y1, &w, &h);
+    if (w <= 128) break;
+  }
+  oled.setCursor(w <= 128 ? (128 - w) / 2 - x1 : 0, font ? y : y - 7);
+  oled.print(s);
+  oled.setFont();
+}
+
 void draw() {
   DateTime t = rtc.now();
   char buf[24];
   oled.clearDisplay();
+  oled.setTextWrap(false);  // chữ dài bị cắt ở mép phải thay vì tràn xuống dòng dưới
   oled.setTextColor(SSD1306_WHITE);
   oled.setTextSize(1);
   oled.setCursor(0, 0);
   snprintf(buf, sizeof buf, "%02d:%02d %02d/%02d/%04d", t.hour(), t.minute(), t.day(), t.month(), t.year());
   oled.print(buf);
   oled.print(phoneConnected() ? "" : " !");  // "!" = chưa có điện thoại nào kết nối
-  oled.setCursor(0, 12);
+  oled.setCursor(0, 8);  // OLED 2 màu: hàng 0-15 vàng, 16-63 xanh -> dòng 8-15 nằm trọn vùng vàng
   if (emergency) oled.print("!! KHAN CAP - MO !!");
   else if (WiFi.status() != WL_CONNECTED) oled.print("Mat WiFi");
   else if (!mqtt.connected()) oled.print("Mat may chu MQTT");
   else if (!phoneConnected()) oled.print("Cho DT ket noi");
   else if (freeSlots >= 0) oled.printf("Con trong: %d/%d", freeSlots, capacity);
   bool showing = millis() < msgUntil || authMode;
-  oled.setTextSize(msg1.length() <= 10 ? 2 : 1);
-  oled.setCursor(0, 28);
-  oled.print(showing ? msg1 : "Moi quet the");
-  oled.setTextSize(1);
-  oled.setCursor(0, 50);
-  if (showing) oled.print(msg2);
+  // Vùng xanh (hàng 16-63): dòng chính chữ đậm to, dòng phụ bên dưới.
+  printFit(showing ? msg1 : String("Moi quet the"), 42, {&FreeSansBold12pt7b, &FreeSansBold9pt7b, nullptr});
+  if (showing && msg2.length()) printFit(msg2, 61, {&FreeSans9pt7b, nullptr});
   oled.display();
 }
 

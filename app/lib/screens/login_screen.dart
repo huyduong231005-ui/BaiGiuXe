@@ -29,39 +29,59 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   @override
-  Widget build(BuildContext context) => Scaffold(
-        body: Center(
+  Widget build(BuildContext context) {
+    final s = Theme.of(context).colorScheme;
+    final t = Theme.of(context).textTheme;
+    return Scaffold(
+      body: Center(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(24),
           child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 360),
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: AutofillGroup(
-                child: Column(mainAxisSize: MainAxisSize.min, children: [
-                  Text('Bãi giữ xe', style: Theme.of(context).textTheme.headlineMedium),
-                  const SizedBox(height: 24),
-                  TextField(
-                    controller: email,
-                    decoration: const InputDecoration(labelText: 'Email'),
-                    keyboardType: TextInputType.emailAddress,
-                    autofillHints: const [AutofillHints.email],
-                  ),
-                  TextField(
-                    controller: pass,
-                    decoration: const InputDecoration(labelText: 'Mật khẩu'),
-                    obscureText: true,
-                    autofillHints: const [AutofillHints.password],
-                    onSubmitted: (_) => _login(),
-                  ),
-                  if (error != null) Padding(
+            constraints: const BoxConstraints(maxWidth: 380),
+            child: AutofillGroup(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                CircleAvatar(
+                  radius: 40,
+                  backgroundColor: s.primaryContainer,
+                  child: Icon(Icons.local_parking, size: 48, color: s.onPrimaryContainer),
+                ),
+                const SizedBox(height: 16),
+                Text('Bãi giữ xe', textAlign: TextAlign.center, style: t.headlineMedium?.copyWith(fontWeight: FontWeight.bold)),
+                Text('Đăng nhập tài khoản nhân viên',
+                    textAlign: TextAlign.center, style: t.bodyMedium?.copyWith(color: s.onSurfaceVariant)),
+                const SizedBox(height: 32),
+                TextField(
+                  controller: email,
+                  decoration: const InputDecoration(labelText: 'Email', prefixIcon: Icon(Icons.email_outlined)),
+                  keyboardType: TextInputType.emailAddress,
+                  textInputAction: TextInputAction.next,
+                  autofillHints: const [AutofillHints.email],
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: pass,
+                  decoration: const InputDecoration(labelText: 'Mật khẩu', prefixIcon: Icon(Icons.lock_outline)),
+                  obscureText: true,
+                  autofillHints: const [AutofillHints.password],
+                  onSubmitted: (_) => _login(),
+                ),
+                if (error != null)
+                  Padding(
                     padding: const EdgeInsets.only(top: 12),
-                    child: Text(error!, style: const TextStyle(color: Colors.red)),
+                    child: Text(error!, style: TextStyle(color: s.error)),
                   ),
-                  const SizedBox(height: 24),
-                  FilledButton(onPressed: busy ? null : _login, child: const Text('Đăng nhập')),
-                ]),
-              ),
+                const SizedBox(height: 24),
+                FilledButton(
+                  onPressed: busy ? null : _login,
+                  child: busy
+                      ? const SizedBox.square(dimension: 20, child: CircularProgressIndicator(strokeWidth: 2))
+                      : const Text('Đăng nhập'),
+                ),
+              ]),
             ),
           ),
         ),
-      );
+      ),
+    );
+  }
 }

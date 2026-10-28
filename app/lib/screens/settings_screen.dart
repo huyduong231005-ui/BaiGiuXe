@@ -74,11 +74,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
         title: Text(g == null ? 'Thêm bảo vệ' : 'Sửa bảo vệ'),
         content: Column(mainAxisSize: MainAxisSize.min, children: [
           TextField(controller: name, decoration: const InputDecoration(labelText: 'Tên')),
+          fieldGap,
           TextField(
             controller: finger,
             decoration: const InputDecoration(labelText: 'ID vân tay trên AS608 (1-300)'),
             keyboardType: TextInputType.number,
           ),
+          fieldGap,
           TextField(
             controller: pin,
             decoration: InputDecoration(labelText: g == null ? 'PIN (4-8 số)' : 'PIN mới (để trống = giữ nguyên)'),
@@ -114,42 +116,58 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
-  Widget _num(TextEditingController c, String label) => TextField(
-        controller: c,
-        decoration: InputDecoration(labelText: label),
-        keyboardType: TextInputType.number,
+  Widget _num(TextEditingController c, String label, IconData icon) => Padding(
+        padding: const EdgeInsets.only(bottom: 12),
+        child: TextField(
+          controller: c,
+          decoration: InputDecoration(labelText: label, prefixIcon: Icon(icon)),
+          keyboardType: TextInputType.number,
+        ),
       );
 
   @override
   Widget build(BuildContext context) {
     final t = Theme.of(context).textTheme;
+    final header = t.titleMedium?.copyWith(fontWeight: FontWeight.w600);
     return ListView(padding: const EdgeInsets.all(16), children: [
-      Text('Giá & sức chứa', style: t.titleMedium),
-      _num(capacity, 'Sức chứa (xe)'),
-      _num(priceDay, 'Giá lượt ban ngày (đ)'),
-      _num(priceNight, 'Giá mỗi đêm (đ)'),
-      TextField(controller: nightMark, decoration: const InputDecoration(labelText: 'Mốc tính qua đêm (HH:MM)')),
-      const SizedBox(height: 8),
-      Align(alignment: Alignment.centerRight, child: FilledButton(onPressed: _saveSettings, child: const Text('Lưu'))),
-      const Divider(height: 32),
+      Text('Giá & sức chứa', style: header),
+      const SizedBox(height: 12),
+      _num(capacity, 'Sức chứa (xe)', Icons.local_parking),
+      _num(priceDay, 'Giá lượt ban ngày (đ)', Icons.wb_sunny_outlined),
+      _num(priceNight, 'Giá mỗi đêm (đ)', Icons.nightlight_outlined),
+      TextField(
+        controller: nightMark,
+        decoration: const InputDecoration(labelText: 'Mốc tính qua đêm (HH:MM)', prefixIcon: Icon(Icons.schedule)),
+      ),
+      const SizedBox(height: 12),
+      FilledButton.icon(onPressed: _saveSettings, icon: const Icon(Icons.save_outlined), label: const Text('Lưu cài đặt')),
+      const SizedBox(height: 24),
       Row(children: [
-        Expanded(child: Text('Bảo vệ', style: t.titleMedium)),
+        Expanded(child: Text('Bảo vệ', style: header)),
         TextButton.icon(onPressed: _editGuard, icon: const Icon(Icons.add), label: const Text('Thêm')),
       ]),
       for (final g in guards)
-        ListTile(
-          leading: const Icon(Icons.security),
-          title: Text('#${g['id']} ${g['name']}'),
-          subtitle: Text('Vân tay: ${g['finger_id'] ?? '-'} · PIN: ${g['pin_hash'] == null ? 'chưa đặt' : 'đã đặt'}'),
-          onTap: () => _editGuard(g),
-          trailing: IconButton(icon: const Icon(Icons.delete_outline), onPressed: () => _deleteGuard(g)),
+        Card(
+          child: ListTile(
+            leading: const CircleAvatar(child: Icon(Icons.security)),
+            title: Text('#${g['id']} ${g['name']}'),
+            subtitle: Text('Vân tay: ${g['finger_id'] ?? '-'} · PIN: ${g['pin_hash'] == null ? 'chưa đặt' : 'đã đặt'}'),
+            onTap: () => _editGuard(g),
+            trailing: IconButton(icon: const Icon(Icons.delete_outline), onPressed: () => _deleteGuard(g)),
+          ),
         ),
-      const Divider(height: 32),
-      ListTile(leading: const Icon(Icons.swap_horiz), title: const Text('Đổi vai trò thiết bị'), onTap: widget.onChangeRole),
-      ListTile(
-        leading: const Icon(Icons.logout),
-        title: const Text('Đăng xuất'),
-        onTap: () => Supabase.instance.client.auth.signOut(),
+      const SizedBox(height: 24),
+      Text('Thiết bị', style: header),
+      const SizedBox(height: 8),
+      Card(
+        child: Column(children: [
+          ListTile(leading: const Icon(Icons.swap_horiz), title: const Text('Đổi vai trò thiết bị'), onTap: widget.onChangeRole),
+          ListTile(
+            leading: Icon(Icons.logout, color: Theme.of(context).colorScheme.error),
+            title: Text('Đăng xuất', style: TextStyle(color: Theme.of(context).colorScheme.error)),
+            onTap: () => Supabase.instance.client.auth.signOut(),
+          ),
+        ]),
       ),
     ]);
   }

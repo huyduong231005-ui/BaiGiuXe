@@ -31,7 +31,7 @@
 // Còi thật là loại thụ động: bật DC chỉ kêu "tạch" nhỏ, phải phát xung. Đổi 0 nếu thay bằng còi active.
 #define BUZZER_PASSIVE 1
 #define BUZZER_HZ      2700  // tần số cộng hưởng phổ biến của còi 12mm, kêu to nhất
-#define SERVO_PIN     26
+#define SERVO_PIN     13  // dây thật ở D13 (bản dò hwtest cũ ghi 26)
 #define EMERGENCY_PIN 34  // chân chỉ-vào, dùng trở 10k ngoài
 #define EMERGENCY_ACTIVE LOW  // đo thực tế: trở kéo lên, nhấn nối xuống GND -> nhấn = LOW
 

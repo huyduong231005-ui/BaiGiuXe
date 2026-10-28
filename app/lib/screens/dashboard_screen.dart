@@ -117,42 +117,78 @@ class _DashboardScreenState extends State<DashboardScreen> {
   @override
   Widget build(BuildContext context) {
     final t = Theme.of(context).textTheme;
+    final s = Theme.of(context).colorScheme;
+    final header = t.titleMedium?.copyWith(fontWeight: FontWeight.w600);
+    final free = status?['free'] as int?, cap = status?['capacity'] as int?;
+    final usedRatio = (free == null || cap == null || cap == 0) ? 0.0 : ((cap - free) / cap).clamp(0.0, 1.0);
+    final barColor = usedRatio >= 0.9 ? s.error : usedRatio >= 0.7 ? Colors.orange : s.primary;
     return RefreshIndicator(
       onRefresh: _reload,
       child: ListView(padding: const EdgeInsets.all(16), children: [
-        Row(children: [
-          Expanded(
-            child: Text(
-              status == null ? '...' : 'Còn trống ${status!['free']}/${status!['capacity']}',
-              style: t.headlineMedium,
+        Card(
+          color: s.primaryContainer,
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('Chỗ trống', style: t.titleSmall?.copyWith(color: s.onPrimaryContainer)),
+              Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
+                Text(free?.toString() ?? '...',
+                    style: t.displayMedium?.copyWith(fontWeight: FontWeight.bold, color: s.onPrimaryContainer)),
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 10, left: 4),
+                  child: Text('/ ${cap ?? '-'} xe', style: t.titleMedium?.copyWith(color: s.onPrimaryContainer)),
+                ),
+                const Spacer(),
+                FilledButton.icon(onPressed: _openGate, icon: const Icon(Icons.lock_open), label: const Text('Mở cổng ra')),
+              ]),
+              const SizedBox(height: 12),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: LinearProgressIndicator(
+                    value: usedRatio, minHeight: 10, color: barColor, backgroundColor: s.surface.withValues(alpha: 0.6)),
+              ),
+            ]),
+          ),
+        ),
+        const SizedBox(height: 20),
+        Text('Xe trong bãi (${parked.length})', style: header),
+        const SizedBox(height: 8),
+        if (parked.isEmpty)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 16),
+            child: Text('Bãi đang trống', textAlign: TextAlign.center, style: TextStyle(color: s.onSurfaceVariant)),
+          ),
+        for (final p in parked)
+          Card(
+            child: ListTile(
+              leading: CircleAvatar(backgroundColor: s.secondaryContainer, child: const Icon(Icons.two_wheeler)),
+              title: Text(p['plate_in'] as String? ?? '(không rõ biển)', style: const TextStyle(fontWeight: FontWeight.w600)),
+              subtitle: Text('Thẻ ${p['card_uid']} · vào ${hhmm(p['time_in'] as String)}'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => _release(p),
             ),
           ),
-          FilledButton.icon(onPressed: _openGate, icon: const Icon(Icons.lock_open), label: const Text('Mở cổng ra')),
-        ]),
-        const SizedBox(height: 16),
-        Text('Xe trong bãi (${parked.length})', style: t.titleMedium),
-        for (final s in parked)
-          ListTile(
-            leading: const Icon(Icons.two_wheeler),
-            title: Text(s['plate_in'] as String? ?? '(không rõ biển)'),
-            subtitle: Text('Thẻ ${s['card_uid']} · vào ${hhmm(s['time_in'] as String)}'),
-            onTap: () => _release(s),
-          ),
-        const Divider(),
-        Text('Sự kiện gần đây', style: t.titleMedium),
-        for (final e in events)
-          ListTile(
-            dense: true,
-            leading: Icon(
-              e['status'] == 'denied' ? Icons.block : e['status'] == 'pending' ? Icons.hourglass_top : Icons.check_circle,
-              color: e['status'] == 'denied' ? Colors.red : null,
-            ),
-            title: Text('${e['gate'] == 'in' ? 'VÀO' : 'RA'} · ${e['kind']} · ${e['plate'] ?? e['uid'] ?? ''}'),
-            subtitle: Text('${hhmm(e['created_at'] as String)} · ${e['message'] ?? e['status']}'),
-            onTap: e['img'] == null
-                ? null
-                : () => showDialog(context: context, builder: (_) => Dialog(child: PlateImage(e['img'] as String, height: 400))),
-          ),
+        const SizedBox(height: 20),
+        Text('Sự kiện gần đây', style: header),
+        const SizedBox(height: 8),
+        Card(
+          child: Column(children: [
+            for (final e in events)
+              ListTile(
+                dense: true,
+                leading: Icon(
+                  e['status'] == 'denied' ? Icons.block : e['status'] == 'pending' ? Icons.hourglass_top : Icons.check_circle,
+                  color: e['status'] == 'denied' ? s.error : e['status'] == 'pending' ? Colors.orange : Colors.green,
+                ),
+                title: Text('${e['gate'] == 'in' ? 'VÀO' : 'RA'} · ${e['kind']} · ${e['plate'] ?? e['uid'] ?? ''}'),
+                subtitle: Text('${hhmm(e['created_at'] as String)} · ${e['message'] ?? e['status']}'),
+                onTap: e['img'] == null
+                    ? null
+                    : () => showDialog(
+                        context: context, builder: (_) => Dialog(child: PlateImage(e['img'] as String, height: 400))),
+              ),
+          ]),
+        ),
       ]),
     );
   }
