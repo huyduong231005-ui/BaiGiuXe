@@ -4,7 +4,6 @@ import '../api.dart';
 import '../logic.dart';
 import '../main.dart';
 import 'dashboard_screen.dart' show hhmm;
-import 'revenue_chart.dart';
 
 String _ymd(DateTime d) => '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
 
@@ -20,7 +19,6 @@ class _HistoryScreenState extends State<HistoryScreen> {
   final plate = TextEditingController();
   List<Rec> rows = [];
   int total = 0;
-  final chart = GlobalKey<RevenueChartState>();
 
   @override
   void initState() {
@@ -71,10 +69,9 @@ class _HistoryScreenState extends State<HistoryScreen> {
     // Một ListView cuộn chung: biểu đồ 7 ngày ở đầu, rồi bộ lọc và danh sách lượt của ngày đang chọn.
     return RefreshIndicator(
       onRefresh: () async {
-        await Future.wait([_load(), chart.currentState?.reload() ?? Future.value()]);
+        await _load();
       },
       child: ListView(children: [
-      Padding(padding: const EdgeInsets.fromLTRB(8, 8, 8, 0), child: RevenueChart(key: chart)),
       Padding(
         padding: const EdgeInsets.all(8),
         child: Row(children: [

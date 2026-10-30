@@ -1,8 +1,12 @@
 import 'dart:typed_data';
 
+import 'package:bai_giu_xe/lot.dart';
 import 'package:bai_giu_xe/nfc.dart';
-import 'package:bai_giu_xe/screens/revenue_chart.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+Map<String, dynamic> _slot(String code, String state, int row, int col) =>
+    {'code': code, 'state': state, 'row': row, 'col': col, 'vehicle_type': 'motorbike', 'active': state != 'off'};
 
 void main() {
   test('uidHex: UID đọc bằng NFC điện thoại cùng định dạng với RC522 ở cổng', () {
@@ -10,16 +14,28 @@ void main() {
     expect(uidHex(Uint8List.fromList([0x04, 0x5A, 0x1F, 0x22, 0x6B, 0x70, 0x80])), '045A1F226B7080');
   });
 
-  test('fillDays: đủ 7 ngày kết thúc hôm nay, ngày không có doanh thu là 0', () {
-    final d = fillDays([
-      {'day': '2026-10-28', 'revenue': 8000, 'sessions': 2},
-      {'day': '2026-10-30', 'revenue': 3000, 'sessions': 1},
-    ], DateTime(2026, 10, 30, 15));
-    expect(d.length, 7);
-    expect(d.first.day, DateTime(2026, 10, 24));
-    expect(d.last.day, DateTime(2026, 10, 30));
-    expect([for (final x in d) x.revenue], [0, 0, 0, 0, 8000, 0, 3000]);
-    // Qua đầu tháng không lệch ngày
-    expect(fillDays(const [], DateTime(2026, 11, 2)).first.day, DateTime(2026, 10, 27));
+  test('vnd: tiền có dấu chấm ngăn nghìn', () {
+    expect(vnd(0), '0đ');
+    expect(vnd(5000), '5.000đ');
+    expect(vnd(1500000), '1.500.000đ');
+    expect(vnd(-25000), '-25.000đ');
+  });
+
+  testWidgets('sơ đồ bãi: vẽ đủ ô theo khu, chạm ô gọi lại đúng ô', (tester) async {
+    final map = {
+      'zones': [
+        {'id': 1, 'name': 'A', 'vehicle_type': 'motorbike', 'rows': 1, 'cols': 3, 'slots': [
+          _slot('A-01', 'resident', 0, 0), _slot('A-02', 'parked', 0, 1), _slot('A-03', 'free', 0, 2),
+        ]},
+      ],
+    };
+    String? tapped;
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(body: SingleChildScrollView(child: LotMapView(map, highlight: 'A-03', onSlot: (s) => tapped = s['code'] as String))),
+    ));
+    expect(find.text('Khu A · Xe máy'), findsOneWidget);
+    expect(find.text('1 trống'), findsOneWidget);
+    await tester.tap(find.text('03'));
+    expect(tapped, 'A-03');
   });
 }

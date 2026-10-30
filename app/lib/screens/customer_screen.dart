@@ -2,18 +2,65 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:qr_flutter/qr_flutter.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../api.dart';
 import '../lock.dart';
 import '../logic.dart';
+import '../lot.dart';
 import '../main.dart';
 import 'accounts_screen.dart' show ProfileScreen;
 import 'dashboard_screen.dart' show hhmm;
 
 const _myImages = '/me/plates/url';
+
+/// Vị trí hiện tại của điện thoại (xin quyền lần đầu). null = người dùng từ chối / tắt định vị.
+Future<Position?> myPosition() async {
+  if (!await Geolocator.isLocationServiceEnabled()) return null;
+  var p = await Geolocator.checkPermission();
+  if (p == LocationPermission.denied) p = await Geolocator.requestPermission();
+  if (p == LocationPermission.denied || p == LocationPermission.deniedForever) return null;
+  return Geolocator.getCurrentPosition(locationSettings: const LocationSettings(accuracy: LocationAccuracy.high));
+}
+
+String distanceText(double m) => m < 1000 ? '${m.round()} m' : '${(m / 1000).toStringAsFixed(1)} km';
+
+/// Chức năng "chia sẻ vị trí": gửi cho người nhà vị trí xe (tên bãi, địa chỉ, ô đậu, link bản đồ) qua Zalo / Messenger...
+Future<void> shareCarLocation(BuildContext context, Rec card) async {
+  try {
+    final lot = await api.get('/lot') as Rec;
+    final slot = card['parked_slot'] ?? card['slot_code'];
+    final link = lot['lat'] == null ? '' : '\nBản đồ: https://www.google.com/maps/search/?api=1&query=${lot['lat']},${lot['lng']}';
+    await SharePlus.instance.share(ShareParams(
+      subject: 'Vị trí xe ${card['plate']}',
+      text: 'Xe ${card['plate']} ${card['session_id'] != null ? 'đang đậu' : 'đậu'} tại ${lot['name']}'
+          '${slot == null ? '' : ', ô $slot'}'
+          '${lot['address'] == null ? '' : '\nĐịa chỉ: ${lot['address']}'}$link',
+    ));
+  } catch (e) {
+    if (context.mounted) showError(context, e);
+  }
+}
+
+/// Sơ đồ bãi (không lộ biển số người khác), tô đậm ô của tôi.
+void showMySlot(BuildContext context, String slot) => Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => Scaffold(
+          appBar: AppBar(title: Text('Ô $slot trên sơ đồ bãi')),
+          body: FutureBuilder(
+            future: Future.wait([vehicleTypes(), api.get('/lot/map/public')]),
+            builder: (c, snap) => snap.hasData
+                ? ListView(padding: const EdgeInsets.all(16), children: [LotMapView(snap.data![1] as Rec, highlight: slot)])
+                : Center(child: snap.hasError ? Text('${snap.error}') : const CircularProgressIndicator()),
+          ),
+        ),
+      ),
+    );
 
 String _dmy(String? ymd) {
   if (ymd == null) return '-';
@@ -176,7 +223,20 @@ class _CardView extends StatelessWidget {
               child: Text(label, style: TextStyle(color: color, fontWeight: FontWeight.w600, fontSize: 12)),
             ),
           ]),
-          if (c['owner'] != null) Text('Chủ xe: ${c['owner']}'),
+          Text([
+            vehicleName(c['vehicle_type'] as String?),
+            if (c['owner'] != null) 'Chủ xe: ${c['owner']}',
+            if (c['apartment'] != null) 'Căn ${c['apartment']}',
+          ].join(' · ')),
+          if (c['slot_code'] != null) ...[
+            const SizedBox(height: 8),
+            Row(children: [
+              Icon(Icons.grid_view, color: s.tertiary),
+              const SizedBox(width: 8),
+              Expanded(child: Text('Ô đậu riêng của bạn: ${c['slot_code']}', style: const TextStyle(fontWeight: FontWeight.w600))),
+              TextButton(onPressed: () => showMySlot(context, c['slot_code'] as String), child: const Text('Xem sơ đồ')),
+            ]),
+          ],
           const SizedBox(height: 12),
           Container(
             padding: const EdgeInsets.all(12),
@@ -213,6 +273,11 @@ class _CardView extends StatelessWidget {
               },
               icon: const Icon(Icons.update),
               label: const Text('Gia hạn'),
+            ),
+            OutlinedButton.icon(
+              onPressed: () => shareCarLocation(context, c),
+              icon: const Icon(Icons.share_location),
+              label: const Text('Chia sẻ vị trí xe'),
             ),
             if (!lost)
               TextButton.icon(
@@ -446,8 +511,21 @@ class _RequestFormState extends State<RequestForm> {
   late final owner = TextEditingController(
       text: widget.request?['owner_name'] as String? ?? widget.renewCard?['owner'] as String? ?? api.session.value?.fullName);
   late final note = TextEditingController(text: widget.request?['note'] as String?);
+  late final apartment = TextEditingController(
+      text: widget.request?['apartment'] as String? ?? widget.renewCard?['apartment'] as String?);
+  late String vehicleType =
+      widget.request?['vehicle_type'] as String? ?? widget.renewCard?['vehicle_type'] as String? ?? 'motorbike';
   late int months = widget.request?['months'] as int? ?? 1;
+  List<Rec> types = const [];
   bool busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    vehicleTypes().then((t) => mounted ? setState(() => types = t) : null).catchError((_) => null);
+  }
+
+  int get _price => (types.firstWhere((t) => t['code'] == vehicleType, orElse: () => const {})['price_month'] as int? ?? 0) * months;
 
   bool get renew => widget.renewCard != null || widget.request?['card_uid'] != null;
 
@@ -458,6 +536,8 @@ class _RequestFormState extends State<RequestForm> {
         'plate': plate.text,
         'ownerName': owner.text.trim(),
         'months': months,
+        'vehicleType': vehicleType,
+        'apartment': apartment.text.trim(),
         'note': note.text.trim(),
         if (widget.renewCard != null) 'cardUid': widget.renewCard!['uid'],
       };
@@ -490,8 +570,24 @@ class _RequestFormState extends State<RequestForm> {
               textCapitalization: TextCapitalization.words,
               decoration: const InputDecoration(labelText: 'Tên chủ xe', prefixIcon: Icon(Icons.person_outline)),
             ),
+            fieldGap,
+            TextField(
+              controller: apartment,
+              textCapitalization: TextCapitalization.characters,
+              decoration: const InputDecoration(labelText: 'Căn hộ', prefixIcon: Icon(Icons.apartment), helperText: 'VD: A1-12.05'),
+            ),
+            fieldGap,
+            DropdownButtonFormField<String>(
+              initialValue: vehicleType,
+              decoration: const InputDecoration(labelText: 'Loại xe', prefixIcon: Icon(Icons.commute)),
+              items: [
+                for (final t in types.isEmpty ? const [{'code': 'motorbike', 'name': 'Xe máy'}] : types)
+                  DropdownMenuItem(value: t['code'] as String, child: Text(t['name'] as String)),
+              ],
+              onChanged: renew ? null : (v) => setState(() => vehicleType = v!),
+            ),
             const SizedBox(height: 20),
-            Text('Số tháng: $months', style: Theme.of(context).textTheme.titleSmall),
+            Text('Số tháng: $months${_price > 0 ? ' · thành tiền ${vnd(_price)}' : ''}', style: Theme.of(context).textTheme.titleSmall),
             Slider(value: months.toDouble(), min: 1, max: 12, divisions: 11, label: '$months tháng',
                 onChanged: (v) => setState(() => months = v.round())),
             TextField(
@@ -519,6 +615,22 @@ class _LotInfo extends StatefulWidget {
 
 class _LotInfoState extends State<_LotInfo> {
   Rec? lot;
+  Position? me; // vị trí của tôi (chức năng chia sẻ vị trí): khoảng cách tới bãi, chấm xanh trên bản đồ
+  bool locating = false;
+
+  Future<void> _locate() async {
+    setState(() => locating = true);
+    try {
+      final p = await myPosition();
+      if (!mounted) return;
+      if (p == null) return showError(context, 'Chưa bật định vị hoặc chưa cho phép quyền vị trí');
+      setState(() => me = p);
+    } catch (e) {
+      if (mounted) showError(context, e);
+    } finally {
+      if (mounted) setState(() => locating = false);
+    }
+  }
 
   @override
   void initState() {
@@ -561,8 +673,14 @@ class _LotInfoState extends State<_LotInfo> {
                 if (l['address'] != null) Text(l['address'] as String, style: TextStyle(color: s.onPrimaryContainer)),
                 const SizedBox(height: 12),
                 Text('Còn trống ${l['free']} / ${l['capacity']} chỗ', style: t.headlineSmall?.copyWith(color: s.onPrimaryContainer)),
-                Text('Giá ngày ${l['priceDay']} đ · mỗi đêm ${l['priceNight']} đ (qua ${l['nightMark']}) · vé tháng miễn phí lượt',
-                    style: TextStyle(color: s.onPrimaryContainer)),
+                if (l['byType'] case final Map by)
+                  Text([for (final e in by.entries) '${vehicleName(e.key as String)}: ${e.value['visitorFree']} ô cho khách'].join(' · '),
+                      style: TextStyle(color: s.onPrimaryContainer)),
+                const SizedBox(height: 8),
+                for (final p in (l['prices'] as List? ?? const []).cast<Rec>())
+                  Text('${p['name']}: lượt ${vnd(p['priceDay'] as num)} · qua đêm ${vnd(p['priceNight'] as num)} · tháng ${vnd(p['priceMonth'] as num)}',
+                      style: TextStyle(color: s.onPrimaryContainer)),
+                Text('Qua mốc ${l['nightMark']} tính giá qua đêm', style: t.labelSmall?.copyWith(color: s.onPrimaryContainer)),
               ]),
             ),
           ),
@@ -579,13 +697,32 @@ class _LotInfoState extends State<_LotInfo> {
                     MarkerLayer(markers: [
                       Marker(point: LatLng(lat.toDouble(), lng.toDouble()), width: 44, height: 44,
                           child: Icon(Icons.location_on, size: 44, color: s.error)),
+                      if (me != null)
+                        Marker(point: LatLng(me!.latitude, me!.longitude), width: 28, height: 28,
+                            child: Icon(Icons.my_location, size: 28, color: s.primary)),
                     ]),
                   ],
                 ),
               ),
             ),
             const SizedBox(height: 8),
-            OutlinedButton.icon(onPressed: () => _directions(lat, lng), icon: const Icon(Icons.directions), label: const Text('Chỉ đường tới bãi')),
+            if (me != null)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Text('Bạn đang cách bãi ${distanceText(Geolocator.distanceBetween(me!.latitude, me!.longitude, lat.toDouble(), lng.toDouble()))}',
+                    style: t.titleMedium, textAlign: TextAlign.center),
+              ),
+            Row(children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: locating ? null : _locate,
+                  icon: locating ? const SizedBox.square(dimension: 18, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.my_location),
+                  label: const Text('Vị trí của tôi'),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(child: OutlinedButton.icon(onPressed: () => _directions(lat, lng), icon: const Icon(Icons.directions), label: const Text('Chỉ đường'))),
+            ]),
           ],
         ],
         const SizedBox(height: 20),

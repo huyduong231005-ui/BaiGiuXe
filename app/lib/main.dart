@@ -14,6 +14,9 @@ import 'screens/cards_screen.dart';
 import 'screens/dashboard_screen.dart';
 import 'screens/guards_screen.dart';
 import 'screens/history_screen.dart';
+import 'screens/lot_map_screen.dart';
+import 'screens/ocr_stats_screen.dart';
+import 'screens/revenue_screen.dart';
 import 'screens/login_screen.dart';
 import 'screens/settings_screen.dart';
 
@@ -205,11 +208,10 @@ class _ManagerHomeState extends State<ManagerHome> {
   Widget build(BuildContext context) {
     final pages = [
       const DashboardScreen(),
-      const HistoryScreen(),
+      const LotMapScreen(),
+      const RevenueScreen(),
       const CardsScreen(),
-      const GuardsScreen(),
-      if (widget.admin) const AccountsScreen(embedded: true),
-      SettingsScreen(onChangeRole: widget.onChangeRole),
+      MoreScreen(admin: widget.admin, onChangeRole: widget.onChangeRole),
     ];
     return Scaffold(
       body: SafeArea(child: IndexedStack(index: tab, children: pages)),
@@ -217,18 +219,47 @@ class _ManagerHomeState extends State<ManagerHome> {
         selectedIndex: tab,
         // Mục cuối "Camera" (chỉ trên ĐT camera) không phải trang: quay về màn camera.
         onDestinationSelected: (i) => i == pages.length ? widget.onShowCamera!() : setState(() => tab = i),
-        labelBehavior: NavigationDestinationLabelBehavior.onlyShowSelected, // 6 mục: hiện hết nhãn thì chật
         destinations: [
           const NavigationDestination(icon: Icon(Icons.local_parking), label: 'Tổng quan'),
-          const NavigationDestination(icon: Icon(Icons.history), label: 'Lịch sử'),
+          const NavigationDestination(icon: Icon(Icons.grid_view), label: 'Sơ đồ'),
+          const NavigationDestination(icon: Icon(Icons.bar_chart), label: 'Doanh thu'),
           const NavigationDestination(icon: Icon(Icons.credit_card), label: 'Thẻ'),
-          const NavigationDestination(icon: Icon(Icons.security), label: 'Bảo vệ'),
-          if (widget.admin) const NavigationDestination(icon: Icon(Icons.manage_accounts), label: 'Tài khoản'),
-          const NavigationDestination(icon: Icon(Icons.settings), label: 'Cài đặt'),
+          const NavigationDestination(icon: Icon(Icons.menu), label: 'Khác'),
           if (widget.onShowCamera != null) const NavigationDestination(icon: Icon(Icons.videocam), label: 'Camera'),
         ],
       ),
     );
+  }
+}
+
+/// Các màn ít dùng hơn: lịch sử, bảo vệ, tài khoản (admin), thống kê nhận diện biển, cài đặt.
+class MoreScreen extends StatelessWidget {
+  const MoreScreen({super.key, this.admin = false, this.onChangeRole});
+
+  final bool admin;
+  final VoidCallback? onChangeRole;
+
+  void _open(BuildContext context, String title, Widget body) => Navigator.push(context,
+      MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: Text(title)), body: SafeArea(child: body))));
+
+  @override
+  Widget build(BuildContext context) {
+    final items = [
+      (Icons.history, 'Lịch sử ra vào', 'Lượt gửi theo ngày, tìm biển số, ảnh xe', () => _open(context, 'Lịch sử', const HistoryScreen())),
+      (Icons.security, 'Bảo vệ & bảng công', 'Bảo vệ, PIN, vân tay, ca trực, chấm công', () => _open(context, 'Bảo vệ', const GuardsScreen())),
+      if (admin)
+        (Icons.manage_accounts, 'Tài khoản', 'Phân quyền admin / quản lý / bảo vệ / khách', () => _open(context, 'Tài khoản', const AccountsScreen(embedded: true))),
+      (Icons.document_scanner_outlined, 'Nhận diện biển số', 'Tốc độ, độ chính xác đo trên các lượt quẹt thật',
+          () => Navigator.push(context, MaterialPageRoute(builder: (_) => const OcrStatsScreen()))),
+      (Icons.settings, 'Cài đặt', 'Loại xe & bảng giá, thông tin bãi, ca trực, đăng xuất',
+          () => _open(context, 'Cài đặt', SettingsScreen(onChangeRole: onChangeRole))),
+    ];
+    return ListView(padding: const EdgeInsets.all(16), children: [
+      Text('Khác', style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold)),
+      const SizedBox(height: 12),
+      for (final (icon, title, sub, onTap) in items)
+        _RoleCard(icon, title, sub, onTap),
+    ]);
   }
 }
 

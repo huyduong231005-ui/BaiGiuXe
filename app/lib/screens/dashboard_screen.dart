@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../api.dart';
 import '../logic.dart';
+import '../lot.dart';
 import '../main.dart';
 import 'lookup_screen.dart';
 
@@ -147,6 +148,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 const Spacer(),
                 FilledButton.icon(onPressed: _openGate, icon: const Icon(Icons.lock_open), label: const Text('Mở cổng ra')),
               ]),
+              if (status?['byType'] case final Map by)
+                Wrap(spacing: 12, children: [
+                  for (final e in by.entries)
+                    Row(mainAxisSize: MainAxisSize.min, children: [
+                      Icon(vehicleIcon(e.key as String), size: 16, color: s.onPrimaryContainer),
+                      const SizedBox(width: 4),
+                      Text('${e.value['visitorFree']} ô khách · ${e.value['free']}/${e.value['capacity']}',
+                          style: t.labelMedium?.copyWith(color: s.onPrimaryContainer)),
+                    ]),
+                ]),
               const SizedBox(height: 12),
               ClipRRect(
                 borderRadius: BorderRadius.circular(8),
@@ -173,9 +184,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
         for (final p in parked)
           Card(
             child: ListTile(
-              leading: CircleAvatar(backgroundColor: s.secondaryContainer, child: const Icon(Icons.two_wheeler)),
+              leading: CircleAvatar(backgroundColor: s.secondaryContainer, child: Icon(vehicleIcon(p['vehicle_type'] as String?))),
               title: Text(p['plate_in'] as String? ?? '(không rõ biển)', style: const TextStyle(fontWeight: FontWeight.w600)),
-              subtitle: Text('Thẻ ${p['card_uid']} · vào ${hhmm(p['time_in'] as String)}'),
+              subtitle: Text('${p['slot_code'] == null ? '' : 'Ô ${p['slot_code']} · '}'
+                  '${p['card_kind'] == 'monthly' ? 'Cư dân' : 'Khách'} · vào ${hhmm(p['time_in'] as String)}'
+                  '${p['offline'] == true ? ' · ghi bù lúc mất mạng' : ''}'),
               trailing: const Icon(Icons.chevron_right),
               onTap: () => _release(p),
             ),

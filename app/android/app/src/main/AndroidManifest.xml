@@ -6,6 +6,8 @@
     <uses-feature android:name="android.hardware.nfc" android:required="false"/>
     <!-- Khoá app bằng vân tay / khuôn mặt của điện thoại -->
     <uses-permission android:name="android.permission.USE_BIOMETRIC"/>
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
     <application
         android:label="bai_giu_xe"
         android:name="${applicationName}"

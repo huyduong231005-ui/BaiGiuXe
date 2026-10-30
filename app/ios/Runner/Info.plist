@@ -2,6 +2,8 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Tính khoảng cách từ bạn tới bãi xe và chia sẻ vị trí</string>
 	<key>NSCameraUsageDescription</key>
 	<string>Chụp biển số xe tại cổng</string>
 	<key>NSMicrophoneUsageDescription</key>

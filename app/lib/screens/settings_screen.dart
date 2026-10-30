@@ -4,6 +4,7 @@ import '../api.dart';
 import '../logic.dart';
 import '../main.dart';
 import '../lock.dart';
+import '../lot.dart';
 import 'accounts_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -17,13 +18,12 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   final capacity = TextEditingController();
-  final priceDay = TextEditingController();
-  final priceNight = TextEditingController();
   final nightMark = TextEditingController();
   final lotName = TextEditingController();
   final address = TextEditingController();
   final latLng = TextEditingController(); // "10.8017, 106.7149" (copy từ Google Maps)
   List<Rec> shifts = [];
+  List<Rec> types = [];
 
   @override
   void initState() {
@@ -37,8 +37,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
       if (!mounted) return;
       setState(() {
         capacity.text = '${s['capacity']}';
-        priceDay.text = '${s['price_day']}';
-        priceNight.text = '${s['price_night']}';
         nightMark.text = (s['night_mark'] as String).substring(0, 5);
         lotName.text = s['lot_name'] as String? ?? '';
         address.text = s['address'] as String? ?? '';
@@ -49,7 +47,73 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
     try {
       final sh = await api.get('/shifts') as List;
-      if (mounted) setState(() => shifts = sh.cast<Rec>());
+      final ty = await reloadVehicleTypes();
+      if (mounted) {
+        setState(() {
+          shifts = sh.cast<Rec>();
+          types = ty;
+        });
+      }
+    } catch (e) {
+      if (mounted) showError(context, e);
+    }
+  }
+
+  /// Thêm / sửa loại xe và giá: vé lượt ban ngày, mỗi lần qua đêm, vé tháng.
+  Future<void> _editType([Rec? ty]) async {
+    final code = TextEditingController(text: ty?['code'] as String?);
+    final name = TextEditingController(text: ty?['name'] as String?);
+    final day = TextEditingController(text: ty == null ? '' : '${ty['price_day']}');
+    final night = TextEditingController(text: ty == null ? '' : '${ty['price_night']}');
+    final month = TextEditingController(text: ty == null ? '' : '${ty['price_month']}');
+    Widget field(TextEditingController c, String label, {bool number = true, bool enabled = true}) => Padding(
+          padding: const EdgeInsets.only(bottom: 12),
+          child: TextField(
+            controller: c,
+            enabled: enabled,
+            keyboardType: number ? TextInputType.number : TextInputType.text,
+            decoration: InputDecoration(labelText: label),
+          ),
+        );
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (c) => AlertDialog(
+        title: Text(ty == null ? 'Thêm loại xe' : 'Giá ${ty['name']}'),
+        content: SingleChildScrollView(
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            field(code, 'Mã (VD: ebike)', number: false, enabled: ty == null),
+            field(name, 'Tên hiển thị', number: false),
+            field(day, 'Vé lượt ban ngày (đ)'),
+            field(night, 'Mỗi lần qua đêm (đ)'),
+            field(month, 'Vé tháng (đ)'),
+          ]),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Huỷ')),
+          FilledButton(onPressed: () => Navigator.pop(c, true), child: const Text('Lưu')),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    final body = {
+      'code': code.text.trim().toLowerCase(),
+      'name': name.text.trim(),
+      'priceDay': int.tryParse(day.text.trim()),
+      'priceNight': int.tryParse(night.text.trim()),
+      'priceMonth': int.tryParse(month.text.trim()),
+    };
+    try {
+      ty == null ? await api.post('/vehicle-types', body) : await api.put('/vehicle-types/${ty['id']}', body);
+      _load();
+    } catch (e) {
+      if (mounted) showError(context, e);
+    }
+  }
+
+  Future<void> _deleteType(Rec ty) async {
+    try {
+      await api.delete('/vehicle-types/${ty['id']}');
+      _load();
     } catch (e) {
       if (mounted) showError(context, e);
     }
@@ -118,8 +182,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _saveSettings() async {
-    final ints = [capacity, priceDay, priceNight].map((c) => int.tryParse(c.text.trim())).toList();
-    if (ints.any((v) => v == null || v < 0) || ints[0] == 0) return showError(context, 'Số không hợp lệ');
+    final cap = int.tryParse(capacity.text.trim());
+    if (cap == null || cap <= 0) return showError(context, 'Sức chứa không hợp lệ');
     if (!RegExp(r'^([01]\d|2[0-3]):[0-5]\d$').hasMatch(nightMark.text.trim())) {
       return showError(context, 'Mốc đêm dạng HH:MM');
     }
@@ -129,9 +193,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
     try {
       await api.put('/settings', {
-        'capacity': ints[0],
-        'priceDay': ints[1],
-        'priceNight': ints[2],
+        'capacity': cap,
         'nightMark': nightMark.text.trim(),
         'lotName': lotName.text.trim(),
         'address': address.text.trim(),
@@ -158,11 +220,26 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final t = Theme.of(context).textTheme;
     final header = t.titleMedium?.copyWith(fontWeight: FontWeight.w600);
     return ListView(padding: const EdgeInsets.all(16), children: [
-      Text('Giá & sức chứa', style: header),
+      Row(children: [
+        Expanded(child: Text('Loại xe & bảng giá', style: header)),
+        TextButton.icon(onPressed: _editType, icon: const Icon(Icons.add), label: const Text('Thêm')),
+      ]),
+      Card(
+        child: Column(children: [
+          for (final ty in types)
+            ListTile(
+              leading: Icon(vehicleIcon(ty['code'] as String?)),
+              title: Text(ty['name'] as String),
+              subtitle: Text('Lượt ${vnd(ty['price_day'] as num)} · qua đêm ${vnd(ty['price_night'] as num)} · tháng ${vnd(ty['price_month'] as num)}'),
+              onTap: () => _editType(ty),
+              trailing: IconButton(icon: const Icon(Icons.delete_outline), tooltip: 'Xoá loại xe chưa dùng', onPressed: () => _deleteType(ty)),
+            ),
+        ]),
+      ),
+      const SizedBox(height: 20),
+      Text('Sức chứa & mốc đêm', style: header),
       const SizedBox(height: 12),
-      _num(capacity, 'Sức chứa (xe)', Icons.local_parking),
-      _num(priceDay, 'Giá lượt ban ngày (đ)', Icons.wb_sunny_outlined),
-      _num(priceNight, 'Giá mỗi đêm (đ)', Icons.nightlight_outlined),
+      _num(capacity, 'Sức chứa (chỉ dùng khi chưa vẽ sơ đồ bãi)', Icons.local_parking),
       TextField(
         controller: nightMark,
         decoration: const InputDecoration(labelText: 'Mốc tính qua đêm (HH:MM)', prefixIcon: Icon(Icons.schedule)),

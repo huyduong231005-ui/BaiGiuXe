@@ -3,13 +3,16 @@ import 'dart:async';
 import 'package:camera/camera.dart';
 import 'package:flutter/foundation.dart';
 import 'package:image/image.dart' as img;
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'api.dart';
 import 'esp_link.dart';
 import 'logic.dart';
+import 'offline.dart';
 
-/// Một lần đọc biển: biển tốt nhất, độ tin cậy, và các phương án đọc khác (OCR hay nhầm 1 ký tự).
-typedef PlateRead = ({String plate, double score, List<String> candidates});
+/// Một lần đọc biển: biển tốt nhất, độ tin cậy, các phương án đọc khác (OCR hay nhầm 1 ký tự),
+/// loại phương tiện Plate Recognizer nhận ra (Motorcycle, Sedan, SUV... null = không rõ).
+typedef PlateRead = ({String plate, double score, List<String> candidates, String? vehicle});
 
 /// Cạnh dài ảnh gửi OCR. Gửi CẢ khung hình (biển ở đâu, góc nào cũng tìm được), chỉ thu nhỏ cho nhanh.
 /// Đo thực tế: 1280px (148KB) đọc đúng, tin cậy 0,997, ~1,7s; ảnh gốc 1080x1920 (~1MB) ~2,5s.
@@ -26,6 +29,7 @@ Future<PlateRead?> recognize(Uint8List jpg) async {
     plate: plate,
     score: (r['score'] as num).toDouble(),
     candidates: (r['candidates'] as List).cast<String>(),
+    vehicle: r['vehicle'] as String?,
   );
 }
 
@@ -78,6 +82,10 @@ class GateStation {
   /// ĐT cổng ra hỏi API lệnh "Mở cổng ra" từ app quản lý theo nhịp này.
   static const commandPoll = Duration(seconds: 3);
 
+  /// Làm mới danh sách thẻ tháng (dùng khi mất mạng) và gửi bù hàng chờ offline.
+  static const whitelistEvery = Duration(minutes: 5);
+  static const flushEvery = Duration(seconds: 30);
+
   final String gate; // 'in' | 'out' | 'both' (1 điện thoại cho cả 2 cổng)
   final CameraController camera;
   final EspLink link;
@@ -90,7 +98,9 @@ class GateStation {
       history.value = [(at: DateTime.now(), gate: g, plate: plate, ok: ok, msg: msg), ...history.value.take(19)];
 
   StreamSubscription<Rec>? _sub;
-  Timer? _commands;
+  Timer? _commands, _wlTimer, _flushTimer;
+  GateOffline? _offline;
+  bool get _guardsEsp => gate != 'in'; // ĐT cổng ra (hoặc cả 2) lo phần bảo vệ, danh sách thẻ, gửi bù của ESP32
   bool _polling = false;
   Future<void> _queue = Future.value(); // camera chỉ chụp được tuần tự
   ({String uid, String? plate, String path, DateTime at})? _lastDenied;
@@ -104,11 +114,44 @@ class GateStation {
     // Nút "Mở cổng ra" trên app Quản lý -> API -> ĐT cổng ra hỏi định kỳ -> MQTT -> ESP32.
     if (gate != 'in') _commands = Timer.periodic(commandPoll, (_) => _pollCommands());
     link.start();
+    SharedPreferences.getInstance().then((p) {
+      _offline = GateOffline(p);
+      _refreshWhitelist();
+      _wlTimer = Timer.periodic(whitelistEvery, (_) => _refreshWhitelist());
+      _flushTimer = Timer.periodic(flushEvery, (_) => _flush());
+    });
+  }
+
+  Future<void> _refreshWhitelist() async {
+    try {
+      if (await _offline!.refreshWhitelist() && _guardsEsp && link.connected) await _sendWhitelist();
+    } catch (e) {
+      debugPrint('[offline] lay danh sach the thang loi: $e'); // mất mạng: giữ danh sách cũ
+    }
+  }
+
+  /// Gửi danh sách thẻ tháng cho ESP32 lưu vào flash (ESP32 tự cho cư dân qua khi mất ĐT / mất mạng).
+  Future<void> _sendWhitelist() async {
+    final msgs = whitelistMessages(_offline?.whitelist ?? const []);
+    for (final m in msgs) {
+      await link.send(m);
+      await Future.delayed(const Duration(milliseconds: 80)); // ESP32 xử lý tuần tự, tránh dồn bộ đệm MQTT
+    }
+    debugPrint('[offline] da gui ${_offline?.whitelist.length} the thang cho ESP32 (${msgs.length} ban tin)');
+  }
+
+  Future<void> _flush() async {
+    try {
+      final n = await _offline?.flush() ?? 0;
+      if (n > 0) last.value = 'Da gui bu $n luot ra vao luc mat mang';
+    } catch (_) {} // vẫn mất mạng: thử lại nhịp sau
   }
 
   Future<void> stop() async {
     await _sub?.cancel();
     _commands?.cancel();
+    _wlTimer?.cancel();
+    _flushTimer?.cancel();
     await link.stop();
   }
 
@@ -117,6 +160,7 @@ class GateStation {
     try {
       final now = DateTime.now();
       await link.send({'t': 'time', 'ts': now.millisecondsSinceEpoch ~/ 1000 + now.timeZoneOffset.inSeconds});
+      if (_guardsEsp) await _sendWhitelist();
       await _sendStatus(await api.get('/status') as Rec);
     } catch (e) {
       last.value = 'Dong bo ESP32 loi: $e';
@@ -138,6 +182,8 @@ class GateStation {
           await _attendance(ev);
         case 'emg':
           await api.post('/gate/emergency', {'on': ev['on'] == true});
+        case 'off':
+          await _forwardOffline(ev);
       }
     } catch (e) {
       last.value = 'Loi (${ev['t']}): $e';
@@ -168,10 +214,12 @@ class GateStation {
     final path = '$g/${now.toIso8601String().substring(0, 10)}/${now.millisecondsSinceEpoch}_$uid.jpg';
 
     var read = await _tryRead(bytes);
+    var shots = 1;
     if (read == null || read.score < minPlateScore) {
       // Không thấy biển / đọc chưa chắc (xe đang lăn, bị che...): chụp lại 1 lần, giữ kết quả tốt hơn.
       // ponytail: mỗi lần chụp lại tốn thêm 1 lượt OCR (gói free 2.500 lượt/tháng).
       final bytes2 = await shoot(camera);
+      shots = 2;
       final read2 = await _tryRead(bytes2);
       if (read2 != null && (read == null || read2.score > read.score)) {
         bytes = bytes2;
@@ -181,16 +229,27 @@ class GateStation {
     final plate = read?.plate;
     final tOcr = sw.elapsedMilliseconds;
 
-    // API quyết định + ghi lượt gửi, nhật ký; phần thời gian còn lại trước khi ESP32 thôi chờ.
+    // API quyết định (thẻ, chỗ trống, biển, ô đậu cho khách) + ghi lượt gửi, nhật ký, số đo nhận diện;
+    // phần thời gian còn lại trước khi ESP32 thôi chờ. API không gọi được -> chế độ offline.
     final left = espWait - sw.elapsed;
-    final r = await api.postWithin('/gate/scan', {
-      'gate': g,
-      'uid': uid,
-      'plate': plate,
-      'score': read?.score ?? 0,
-      'candidates': read?.candidates ?? const <String>[],
-      'img': path,
-    }, left < const Duration(seconds: 2) ? const Duration(seconds: 2) : left) as Rec;
+    Rec r;
+    try {
+      r = await api.postWithin('/gate/scan', {
+        'gate': g,
+        'uid': uid,
+        'plate': plate,
+        'score': read?.score ?? 0,
+        'candidates': read?.candidates ?? const <String>[],
+        'vehicle': read?.vehicle,
+        'img': path,
+        'shots': shots,
+        'ocrMs': tOcr - tShot,
+        'totalMs': sw.elapsedMilliseconds, // tới lúc gửi API; phần còn lại là API + MQTT (~0,3s)
+      }, left < const Duration(seconds: 2) ? const Duration(seconds: 2) : left) as Rec;
+    } on ApiException catch (e) {
+      if (e.status != null) rethrow; // API trả lỗi nghiệp vụ / lỗi máy chủ: không phải mất mạng
+      r = await _offlineDecision(g, uid, plate, now);
+    }
     final ok = r['ok'] == true;
     final message = r['l2'] as String;
     await link.send({'t': 'res', 'id': ev['id'], 'ok': ok, 'open': r['open'] == true, 'l1': r['l1'], 'l2': message});
@@ -205,6 +264,7 @@ class GateStation {
 
     // Sau khi cổng đã có kết quả: số chỗ trống cho OLED, tải ảnh (đã thu nhỏ) lên API.
     try {
+      if (r['status'] == null) return; // offline: không có số chỗ, ảnh không gửi được
       await _sendStatus(r['status'] as Rec);
       await api.putJpeg('/gate/images', await compute(shrinkForOcr, bytes), {'path': path});
     } catch (e) {
@@ -261,6 +321,27 @@ class GateStation {
     } finally {
       _polling = false;
     }
+  }
+
+  /// Mất mạng tới API: thẻ tháng còn hạn (danh sách đã lưu) thì cho qua và xếp hàng chờ gửi bù; thẻ khác từ chối.
+  Future<Rec> _offlineDecision(String g, String uid, String? plate, DateTime now) async {
+    final ok = _offline?.allows(uid, now) ?? false;
+    if (ok) await _offline!.add(g, uid, now);
+    return {
+      'ok': ok,
+      'open': ok && g != 'in',
+      'l1': plate ?? (ok ? 'CU DAN' : 'TU CHOI'),
+      'l2': ok ? 'Mat mang - moi qua' : 'Mat mang, goi bao ve',
+      'status': null,
+    };
+  }
+
+  /// ESP32 gửi bù các lượt ghi lúc mất ĐT / mất mạng: chuyển lên API rồi báo ESP32 xoá phần đã gửi.
+  Future<void> _forwardOffline(Rec ev) async {
+    final events = (ev['ev'] as List).cast<Rec>();
+    final r = await api.post('/gate/offline', {'events': events}) as Rec;
+    await link.send({'t': 'offack', 'n': events.length});
+    last.value = 'ESP32 gui bu ${events.length} luot (ghi moi ${r['applied']})';
   }
 
   /// Lỗi mạng / OCR -> null (API xử lý như không đọc được biển) và hiện lỗi trên màn camera.

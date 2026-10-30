@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../api.dart';
 import '../logic.dart';
+import '../lot.dart';
 import '../main.dart';
 import '../nfc.dart';
 import 'requests_screen.dart';
@@ -147,6 +148,7 @@ class _CardTile extends StatelessWidget {
     final info = [
       if (plate != null) 'UID ${c['uid']}',
       if (c['owner'] != null) c['owner'],
+      if (c['apartment'] != null) 'căn ${c['apartment']}',
       if (c['user_name'] != null) '@${c['user_name']}',
     ].join(' · ');
     final until = c['valid_until'] as String?;
@@ -156,7 +158,7 @@ class _CardTile extends StatelessWidget {
         contentPadding: const EdgeInsets.fromLTRB(16, 4, 4, 4),
         leading: CircleAvatar(
           backgroundColor: !active ? s.surfaceContainerHighest : monthly ? s.tertiaryContainer : s.primaryContainer,
-          child: Icon(monthly ? Icons.event_repeat : Icons.credit_card,
+          child: Icon(monthly ? vehicleIcon(c['vehicle_type'] as String?) : Icons.credit_card,
               color: !active ? s.outline : monthly ? s.onTertiaryContainer : s.onPrimaryContainer),
         ),
         title: Text(plate ?? c['uid'] as String,
@@ -165,7 +167,8 @@ class _CardTile extends StatelessWidget {
           if (info.isNotEmpty) Text(info),
           const SizedBox(height: 4),
           Wrap(spacing: 6, children: [
-            _Tag(monthly ? 'Vé tháng' : 'Vé lượt', monthly ? s.tertiary : s.primary),
+            _Tag(monthly ? 'Vé tháng · ${vehicleName(c['vehicle_type'] as String?)}' : 'Vé lượt', monthly ? s.tertiary : s.primary),
+            if (c['slot_code'] != null) _Tag('Ô ${c['slot_code']}', s.secondary),
             if (monthly && until != null) _Tag('${expired ? 'Hết hạn' : 'Đến'} ${until.substring(8, 10)}/${until.substring(5, 7)}', expired ? s.error : s.tertiary),
             if (c['lost_at'] != null) _Tag('Khách báo mất', s.error) else if (!active) _Tag('Đã khoá', s.error),
           ]),
@@ -206,6 +209,9 @@ class _CardFormState extends State<CardForm> {
   late final uid = TextEditingController(text: widget.card?['uid'] as String?);
   late final plate = TextEditingController(text: widget.card?['plate'] as String?);
   late final owner = TextEditingController(text: widget.card?['owner'] as String?);
+  late final apartment = TextEditingController(text: widget.card?['apartment'] as String?);
+  late String vehicleType = widget.card?['vehicle_type'] as String? ?? 'motorbike';
+  List<Rec> types = const [];
   late String kind = widget.card?['kind'] as String? ?? 'guest';
   late bool active = widget.card?['active'] as bool? ?? true;
   late String? validUntil = widget.card?['valid_until'] as String?; // 'YYYY-MM-DD', null = không giới hạn
@@ -221,6 +227,7 @@ class _CardFormState extends State<CardForm> {
   @override
   void initState() {
     super.initState();
+    vehicleTypes().then((t) => mounted ? setState(() => types = t) : null).catchError((_) => null);
     if (!isNew) return;
     _waitScan();
     nfcAvailable().then((v) => mounted ? setState(() => hasNfc = v) : null);
@@ -293,6 +300,8 @@ class _CardFormState extends State<CardForm> {
       'kind': kind,
       'plate': p.isEmpty ? null : p,
       'owner': owner.text.trim().isEmpty ? null : owner.text.trim(),
+      'apartment': apartment.text.trim().isEmpty ? null : apartment.text.trim().toUpperCase(),
+      'vehicleType': kind == 'monthly' ? vehicleType : null,
       'active': active,
       'validUntil': kind == 'monthly' ? validUntil : null,
       if (widget.card?['lost_at'] != null && !lost) 'lost': false, // khách tìm lại được thẻ
@@ -375,6 +384,16 @@ class _CardFormState extends State<CardForm> {
         ),
         if (kind == 'monthly') ...[
           const SizedBox(height: 12),
+          DropdownButtonFormField<String>(
+            initialValue: vehicleType,
+            decoration: const InputDecoration(labelText: 'Loại xe (giá vé tháng, khu đậu)', prefixIcon: Icon(Icons.commute)),
+            items: [
+              for (final t in types.isEmpty ? const [{'code': 'motorbike', 'name': 'Xe máy'}] : types)
+                DropdownMenuItem(value: t['code'] as String, child: Text(t['name'] as String)),
+            ],
+            onChanged: (v) => setState(() => vehicleType = v!),
+          ),
+          const SizedBox(height: 12),
           OutlinedButton.icon(
             icon: const Icon(Icons.event),
             label: Text(validUntil == null ? 'Hạn vé: không giới hạn (chạm để chọn)' : 'Hạn vé: dùng tới hết $validUntil'),
@@ -408,6 +427,17 @@ class _CardFormState extends State<CardForm> {
           textCapitalization: TextCapitalization.words,
           decoration: const InputDecoration(labelText: 'Chủ xe', prefixIcon: Icon(Icons.person_outline)),
         ),
+        fieldGap,
+        TextField(
+          controller: apartment,
+          textCapitalization: TextCapitalization.characters,
+          decoration: const InputDecoration(labelText: 'Căn hộ (VD: A1-12.05)', prefixIcon: Icon(Icons.apartment)),
+        ),
+        if (widget.card?['slot_code'] != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 12),
+            child: Text('Ô đậu riêng: ${widget.card!['slot_code']} (đổi ở tab Sơ đồ)', style: t.bodyMedium),
+          ),
         if (!isNew && widget.card!['lost_at'] != null) ...[
           fieldGap,
           Card(
