@@ -85,7 +85,11 @@ Ngoài firmware chính còn có firmware kiểm tra phần cứng `firmware/src/
 | Dart | SDK ^3.13 |
 | Nền tảng | Android, iOS, macOS (macOS chỉ dùng vai trò Quản lý) |
 
-Một app có 3 vai trò, chọn khi mở lần đầu: **Quản lý**, **Camera cổng vào**, **Camera cổng ra** (hoặc **Camera cả 2 cổng**).
+Một app, mở theo tài khoản đăng nhập:
+- **Quản lý / admin** (admin có thêm tab Tài khoản).
+- **Bảo vệ:** xem bảng công của mình.
+- **Khách hàng:** xem chỗ trống, đường tới ô của mình, đăng ký / gia hạn vé tháng, chỉ đường tới bãi.
+- **Thiết bị camera:** đăng nhập tài khoản quản lý ở chế độ "Thiết bị camera", rồi chọn vai trò của máy: Quản lý, Camera cổng vào, Camera cổng ra hoặc Camera cả 2 cổng.
 
 Thư viện:
 
@@ -96,12 +100,16 @@ Thư viện:
 | image | 4.12.0 | Cắt vùng biển số và nén JPEG ngay trên điện thoại trước khi gửi đi |
 | http | 1.6.0 | Gọi REST API (đăng nhập, mọi dữ liệu, gửi ảnh nhận diện biển số) |
 | wakelock_plus | 1.8.2 | Giữ màn hình điện thoại camera luôn sáng |
-| shared_preferences | 2.5.6 | Lưu vai trò thiết bị và mức zoom camera |
+| shared_preferences | 2.5.6 | Lưu phiên đăng nhập, vai trò thiết bị, mức zoom camera, danh sách thẻ tháng và hàng chờ lượt offline |
+| google_sign_in, local_auth | — | Đăng nhập Google; khoá app bằng vân tay / khuôn mặt |
+| flutter_map, latlong2, geolocator, url_launcher | — | Bản đồ vị trí bãi, chỉ đường bằng Google Maps cho khách |
+| fl_chart | — | Biểu đồ doanh thu, thống kê nhận diện biển |
+| image_picker, mobile_scanner, qr_flutter, nfc_manager, share_plus | — | Chụp biển để tra cứu, quét / hiện mã QR, đọc thẻ bằng NFC, chia sẻ báo cáo |
 | cupertino_icons | 1.0.9 | Bộ icon |
 | flutter_test (dev) | theo SDK | Kiểm thử đơn vị (`app/test/`): gọi API, hạn vé tháng, cắt ảnh, tính trễ/sớm |
 | flutter_lints (dev) | 6.0.0 | Quy tắc kiểm tra code |
 
-Giao diện dùng Material 3 (sáng/tối theo hệ thống). Các màn chính: Tổng quan, Lịch sử, Thẻ, Bảo vệ (kèm Bảng công), Cài đặt (kèm Ca trực), Camera. Khoá API và thông tin máy chủ truyền vào lúc build qua `--dart-define-from-file=dart_defines.json`.
+Giao diện dùng Material 3 (sáng/tối theo hệ thống). Các màn chính: Tổng quan, Sơ đồ bãi (kèm Sửa mặt bằng: đường 2 chiều / 1 chiều, khu, ô đậu), Lịch sử, Tra cứu biển, Thẻ, Đơn vé tháng, Bảo vệ (kèm Bảng công), Doanh thu, Thống kê nhận diện, Tài khoản, Cài đặt (kèm Ca trực), Camera, màn Khách hàng. Khoá API và thông tin máy chủ truyền vào lúc build qua `--dart-define-from-file=dart_defines.json`.
 
 ## 5. Dịch vụ đám mây
 
@@ -110,14 +118,14 @@ Giao diện dùng Material 3 (sáng/tối theo hệ thống). Các màn chính: 
 | Thành phần | Dùng để |
 |---|---|
 | Dart 3.13, shelf | REST API (`backend/`), biên dịch thành 1 file chạy trong Docker, deploy Render gói free (Singapore) |
-| mongo_dart + MongoDB Atlas M0 | Các collection `app_users`, `otps`, `settings`, `cards`, `guards`, `sessions`, `gate_events`, `shift_defs`, `attendance`, `ticket_requests`, `plate_images`. Id số tự tăng (collection `counters`) |
+| mongo_dart + MongoDB Atlas M0 | Các collection `app_users`, `otps`, `settings`, `cards`, `guards`, `sessions`, `gate_events`, `shift_defs`, `attendance`, `ticket_requests`, `plate_images`, `vehicle_types`, `zones`, `slots`, `payments`. Id số tự tăng (collection `counters`) |
 | Index unique có điều kiện | Mỗi thẻ / mỗi biển chỉ có 1 lượt đang gửi, mỗi bảo vệ chỉ có 1 ca đang mở |
 | JWT HS256 (tự viết trên package crypto), bcrypt | JWT 7 ngày, băm mật khẩu và PIN bảo vệ (đọc được token / hash cũ của bản Node) |
 | Brevo HTTP API | Gửi mã OTP qua email (Render free chặn cổng SMTP) |
 | Google tokeninfo | Xác thực idToken đăng nhập Google |
 | excel | Báo cáo tháng Excel |
 | Swagger UI (`/docs`) | Thử từng API |
-| package:test | 50 test chạy trên MongoDB thật (mỗi file một database tạm) |
+| package:test | Hơn 50 test: luật tính phí / chỉ đường chạy độc lập, còn lại chạy trên MongoDB thật (mỗi file một database tạm) |
 
 ### EMQX Cloud Serverless (MQTT broker)
 
@@ -127,12 +135,14 @@ Giao diện dùng Material 3 (sáng/tối theo hệ thống). Các màn chính: 
 
 | Topic | Chiều | Nội dung |
 |---|---|---|
-| `bgx/evt` | ESP32 → ĐT | Sự kiện: quẹt thẻ, xác thực bảo vệ, đăng ký vân tay xong, chấm công, khẩn cấp |
-| `bgx/cmd` | ĐT → ESP32 | Lệnh: kết quả quẹt, mở cổng, số chỗ trống, chỉnh giờ, kết quả PIN, kết quả chấm công |
+| `bgx/evt` | ESP32 → ĐT | Sự kiện: quẹt thẻ, xác thực bảo vệ, đăng ký vân tay xong, chấm công, khẩn cấp, gửi bù lượt offline (`off`) |
+| `bgx/cmd` | ĐT → ESP32 | Lệnh: kết quả quẹt, mở cổng, số chỗ trống, chỉnh giờ, kết quả PIN, kết quả chấm công, danh sách thẻ tháng (`wl`), xác nhận đã nhận lượt offline (`offack`) |
 | `bgx/esp` | ESP32 → ĐT | `1`/`0`: ESP32 online/offline (retained + Last Will) |
 | `bgx/phone/in`, `bgx/phone/out`, `bgx/phone/both` | ĐT → ESP32 | `1`/`0`: điện thoại của cổng đó online/offline (retained + Last Will) |
 
 Nhờ dùng MQTT qua Internet, điện thoại camera dùng WiFi hay 4G đều được, không cần đứng gần ESP32.
+
+**Chế độ offline:** điện thoại cổng ra gửi danh sách thẻ tháng (`/gate/whitelist`) cho ESP32 lưu vào flash (LittleFS). Mất mạng / mất điện thoại hoặc điện thoại trả lời quá 12 giây thì ESP32 tự cho cư dân qua, ghi lượt vào `/off.log`, có mạng lại thì gửi bù qua điện thoại lên `/gate/offline` (API bỏ lượt trùng). Điện thoại nhận kết quả quá giờ thì bỏ lượt, không ghi lên API, tránh lượt gửi lệch với barrier.
 
 ### Plate Recognizer (nhận diện biển số)
 

@@ -643,9 +643,9 @@ void handleCmd(const char *s) {
   }
   const char *t = d["t"] | "";
   if (!strcmp(t, "res")) {
-    long id = d["id"] | 0L;
+    long id = d["id"] | 0L;  // id 0 = quẹt thử trên app: cổng rảnh cũng có pendingId 0, không được mở barrier
     for (Gate *g : {&gIn, &gOut})
-      if (g->pendingId == id) finishScan(*g, d["ok"] | false, d["l1"] | "", d["l2"] | "", d["open"] | false);
+      if (id && g->pendingId == id) finishScan(*g, d["ok"] | false, d["l1"] | "", d["l2"] | "", d["open"] | false);
   } else if (!strcmp(t, "open")) {
     openBarrier();
     showMsg("DA MO", "Lenh tu app");

@@ -17,7 +17,7 @@ const cmdTopic = 'bgx/cmd'; // ĐT -> ESP32
 const espTopic = 'bgx/esp'; // "1"/"0" (retained + LWT): ESP32 có đang online không
 String phoneTopic(String gate) => 'bgx/phone/$gate'; // "1"/"0" (retained + LWT): ĐT của cổng này
 
-/// Kết nối tới ESP32 qua MQTT broker (HiveMQ Cloud, TLS), tự kết nối lại khi rớt.
+/// Kết nối tới ESP32 qua MQTT broker (EMQX Cloud, TLS), tự kết nối lại khi rớt.
 /// ĐT dùng WiFi hay 4G đều được. Bản tin hai chiều là JSON một dòng.
 class EspLink {
   EspLink(this.gate);
