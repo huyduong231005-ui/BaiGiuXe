@@ -52,7 +52,7 @@ export function customerRouter({ jwtSecret }) {
     const filter = { uid: req.params.uid.toUpperCase(), user_id: req.user.id };
     const card = await Card.findOne(filter).lean();
     if (!card) throw new HttpError(404, 'Không có thẻ này trong tài khoản của bạn');
-    res.json(row(await Card.findOneAndUpdate(filter, { lost_at: card.lost_at ?? new Date(), active: false }, { new: true }).lean()));
+    res.json(row(await Card.findOneAndUpdate(filter, { lost_at: card.lost_at ?? new Date(), active: false }, { returnDocument: 'after' }).lean()));
   });
 
   // Mã QR vé xe: ký bằng JWT, hết hạn sau 10 phút, không lộ UID thẻ (UID lộ ra thì sao chép được thẻ RFID).
@@ -95,7 +95,7 @@ export function customerRouter({ jwtSecret }) {
   router.patch('/me/requests/:id', async (req, res) => {
     const r = requestInput(req.body);
     const saved = await TicketRequest.findOneAndUpdate(
-      { _id: Number(req.params.id) || 0, user_id: req.user.id, status: 'pending' }, r, { new: true }).lean();
+      { _id: Number(req.params.id) || 0, user_id: req.user.id, status: 'pending' }, r, { returnDocument: 'after' }).lean();
     if (!saved) throw new HttpError(409, 'Chỉ sửa được đơn đang chờ duyệt của bạn');
     res.json(row(saved));
   });
@@ -146,10 +146,10 @@ export function requestsRouter() {
     const until = extendUntil(card?.kind === 'monthly' ? card.valid_until : null, r.months);
     const saved = await Card.findOneAndUpdate({ uid }, {
       kind: 'monthly', plate: r.plate, owner: r.owner_name, active: true, user_id: r.user_id, valid_until: until, lost_at: null,
-    }, { new: true, upsert: true, setDefaultsOnInsert: true }).lean();
+    }, { returnDocument: 'after', upsert: true, setDefaultsOnInsert: true }).lean();
     const done = await TicketRequest.findByIdAndUpdate(r.id, {
       status: 'approved', card_uid: uid, reply: str(req.body?.reply) || null, handled_by: req.user.id, handled_at: new Date(),
-    }, { new: true }).lean();
+    }, { returnDocument: 'after' }).lean();
     res.json({ request: row(done), card: row(saved) });
   });
 
@@ -158,7 +158,7 @@ export function requestsRouter() {
     const reply = str(req.body?.reply);
     if (!reply) throw new HttpError(400, 'Cần ghi lý do từ chối để khách biết');
     res.json(row(await TicketRequest.findByIdAndUpdate(r.id,
-      { status: 'rejected', reply, handled_by: req.user.id, handled_at: new Date() }, { new: true }).lean()));
+      { status: 'rejected', reply, handled_by: req.user.id, handled_at: new Date() }, { returnDocument: 'after' }).lean()));
   });
   return router;
 }

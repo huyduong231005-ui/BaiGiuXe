@@ -79,7 +79,7 @@ export function updateProfile() {
 
 /** Sửa tài khoản, trả về dòng mới (null nếu không có). */
 export const setUser = async (id, changes) =>
-  row(await User.findByIdAndUpdate(id, changes, { new: true }).lean());
+  row(await User.findByIdAndUpdate(id, changes, { returnDocument: 'after' }).lean());
 
 const findUser = async (filter) => row(await User.findOne(filter).lean());
 

@@ -79,7 +79,7 @@ async function withFee(rows, plate) {
 
 /** Đóng lượt đang gửi (chỉ khi chưa ai đóng), trả về dòng mới hoặc null. */
 export const closeSession = async (id, changes) => row(await Session.findOneAndUpdate(
-  { _id: id, parked: true }, { ...changes, time_out: new Date(), parked: false }, { new: true }).lean());
+  { _id: id, parked: true }, { ...changes, time_out: new Date(), parked: false }, { returnDocument: 'after' }).lean());
 
 export const TICKET_AUDIENCE = 'bgx-ticket';
 
@@ -255,7 +255,7 @@ export function manageRouter() {
     const old = await Card.findOne({ uid }).lean();
     if (!old) throw new HttpError(404, 'Không có thẻ này');
     const changes = { ...cardInput({ ...old, ...req.body }, uid), ...(req.body?.lost === false ? { lost_at: null } : {}) };
-    res.json(row(await Card.findOneAndUpdate({ uid }, changes, { new: true }).lean()));
+    res.json(row(await Card.findOneAndUpdate({ uid }, changes, { returnDocument: 'after' }).lean()));
   });
 
   // Thẻ đã có lượt gửi thì không xoá được (giữ lịch sử), như khoá ngoại cũ.
@@ -285,7 +285,7 @@ export function manageRouter() {
     res.json(row(await Settings.findByIdAndUpdate(1, {
       capacity, price_day: priceDay, price_night: priceNight, night_mark: `${nightMark}:00`,
       lot_name: str(b.lotName) || old.lot_name, address: b.address !== undefined ? str(b.address) || null : old.address, lat, lng,
-    }, { new: true }).lean()));
+    }, { returnDocument: 'after' }).lean()));
   });
   return router;
 }

@@ -10,7 +10,8 @@ import {
 const PASSWORD = 'demo1234';
 const GUARD = 'Nguyễn Văn Tuấn';
 const USERS = [
-  ['quanly', 'huyduong455+ql@gmail.com', 'Trần Quản Lý', 'manager'],
+  ['admin', 'huyduong455+admin@gmail.com', 'Quản trị viên', 'admin'],
+  ['quanly','huyduong455+ql@gmail.com', 'Trần Quản Lý', 'manager'],
   ['baove', 'huyduong455+bv@gmail.com', GUARD, 'guard'],
   ['khach01', 'huyduong455+kh01@gmail.com', 'Lê Minh Khách', 'customer'],
   ['khach02', 'huyduong455+kh02@gmail.com', 'Phạm Thu Hà', 'customer'],

@@ -14,7 +14,7 @@ const Counter = model('Counter', new Schema({ _id: String, seq: Number }, opts),
 
 /** Id số tự tăng theo từng collection (thay cho "generated always as identity"). */
 export const nextId = async (name) =>
-  (await Counter.findByIdAndUpdate(name, { $inc: { seq: 1 } }, { new: true, upsert: true })).seq;
+  (await Counter.findByIdAndUpdate(name, { $inc: { seq: 1 } }, { returnDocument: 'after', upsert: true })).seq;
 
 /** Document (lean) -> dòng JSON giống Postgres: _id số thành id, bỏ các cờ nội bộ dùng cho index. */
 export function row(d) {

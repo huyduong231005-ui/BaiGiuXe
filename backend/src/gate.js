@@ -149,7 +149,7 @@ export function gateRouter() {
   });
 
   router.post('/gate/commands/:id/done', async (req, res) => {
-    const e = await GateEvent.findOneAndUpdate({ _id: Number(req.params.id) || 0, kind: 'open_cmd' }, { status: 'done' }, { new: true }).lean();
+    const e = await GateEvent.findOneAndUpdate({ _id: Number(req.params.id) || 0, kind: 'open_cmd' }, { status: 'done' }, { returnDocument: 'after' }).lean();
     if (!e) throw new HttpError(404, 'Không có lệnh này');
     res.json(row(e));
   });

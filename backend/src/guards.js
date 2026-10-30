@@ -103,7 +103,7 @@ export function guardsRouter() {
       ...(req.body && 'fingerId' in req.body ? { finger_id: finger ?? null } : {}),
       ...(pin ? { pin_hash: await bcrypt.hash(pin, 10) } : {}),
     };
-    const guard = row(await Guard.findByIdAndUpdate(Number(req.params.id) || 0, changes, { new: true }).lean());
+    const guard = row(await Guard.findByIdAndUpdate(Number(req.params.id) || 0, changes, { returnDocument: 'after' }).lean());
     if (!guard) throw new HttpError(404, 'Không có bảo vệ này');
     res.json(publicGuard(guard));
   });
@@ -135,7 +135,7 @@ export function guardsRouter() {
   router.post('/shifts', async (req, res) => res.status(201).json(await insert(ShiftDef, shiftInput(req.body))));
 
   router.put('/shifts/:id', async (req, res) => {
-    const shift = row(await ShiftDef.findByIdAndUpdate(Number(req.params.id) || 0, shiftInput(req.body), { new: true }).lean());
+    const shift = row(await ShiftDef.findByIdAndUpdate(Number(req.params.id) || 0, shiftInput(req.body), { returnDocument: 'after' }).lean());
     if (!shift) throw new HttpError(404, 'Không có ca này');
     res.json(shift);
   });
