@@ -49,6 +49,14 @@ void main() {
     expect(tapped, 'C-02');
   });
 
+  test('xoay mặt bằng 90°: ô, đường đi đổi vị trí khớp nhau', () {
+    final r = rotatePlan(['AB', 'CD', 'EF'], {'0,1': {'code': 'B'}}, [(0, 0), (0, 1)], const []);
+    expect(r.layout, ['ECA', 'FDB']);
+    expect(r.slots.keys, ['1,2']);
+    expect(r.layout[1][2], 'B');
+    expect(r.route, [(0, 2), (1, 2)]);
+  });
+
   test('cellsFrom: đường đi từ API thành danh sách ô', () {
     expect(cellsFrom([[0, 1], [1, 1]]), [(0, 1), (1, 1)]);
     expect(cellsFrom(null), isEmpty);

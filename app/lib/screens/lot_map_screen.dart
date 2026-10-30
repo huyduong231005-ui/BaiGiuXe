@@ -149,51 +149,61 @@ class _LotMapScreenState extends State<LotMapScreen> {
     }
   }
 
+  void _help() => showDialog(
+        context: context,
+        builder: (c) => AlertDialog(
+          title: const Text('Sơ đồ bãi'),
+          content: const Text('Chạm ô để xem đường từ cổng vào, gán ô cho cư dân hoặc khoá ô.\n\n'
+              'Khách vãng lai quẹt thẻ ở cổng được API chỉ ô trống gần cổng vào nhất theo quãng đường xe chạy, '
+              'đúng loại xe, không đụng ô cư dân.\n\nDùng 2 ngón tay để phóng to, kéo để di chuyển.'),
+          actions: [TextButton(onPressed: () => Navigator.pop(c), child: const Text('Đã hiểu'))],
+        ),
+      );
+
   @override
   Widget build(BuildContext context) {
     final t = Theme.of(context).textTheme;
     final s = Theme.of(context).colorScheme;
     final m = map;
     final r = route;
-    return RefreshIndicator(
-      onRefresh: _reload,
-      child: ListView(padding: const EdgeInsets.all(16), children: [
-        Row(children: [
-          Expanded(child: Text('Sơ đồ bãi', style: t.titleLarge?.copyWith(fontWeight: FontWeight.bold))),
-          FilledButton.tonalIcon(onPressed: _edit, icon: const Icon(Icons.edit_outlined), label: const Text('Sửa mặt bằng')),
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      // Đầu trang 1 dòng: tiêu đề + chỗ trống cho khách theo loại xe (chữ nhỏ) + nút
+      Padding(
+        padding: const EdgeInsets.fromLTRB(16, 8, 4, 0),
+        child: Row(children: [
+          Text('Sơ đồ', style: t.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
+          const SizedBox(width: 10),
+          Expanded(child: m == null ? const SizedBox.shrink() : _TypeSummary(m)),
+          IconButton(onPressed: _help, icon: const Icon(Icons.info_outline), tooltip: 'Hướng dẫn', visualDensity: VisualDensity.compact),
+          IconButton(onPressed: _edit, icon: const Icon(Icons.edit_outlined), tooltip: 'Sửa mặt bằng', visualDensity: VisualDensity.compact),
         ]),
-        Text('Chạm ô để xem đường từ cổng, gán cho cư dân hoặc khoá ô. Khách vãng lai được API chỉ ô trống gần cổng vào nhất '
-            'theo quãng đường xe chạy. Dùng 2 ngón tay để phóng to.', style: t.bodySmall),
-        const SizedBox(height: 12),
-        if (m == null)
-          const Center(child: Padding(padding: EdgeInsets.all(32), child: CircularProgressIndicator()))
-        else ...[
-          _TypeSummary(m),
-          const SizedBox(height: 12),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(12),
-            child: LotPlanView(m,
-                onSlot: _slotSheet,
-                route: cellsFrom(r?['path']),
-                exitRoute: cellsFrom(r?['exitPath']),
-                highlight: r?['slot'] as String?),
-          ),
-          const SizedBox(height: 8),
-          LotLegend(withRoute: r != null),
-          if (r != null)
-            Card(
-              color: s.primaryContainer,
-              margin: const EdgeInsets.only(top: 12),
-              child: ListTile(
-                leading: Icon(Icons.route, color: s.onPrimaryContainer),
-                title: Text('Đường tới ô ${r['slot']} (${r['distance']} ô)', style: TextStyle(color: s.onPrimaryContainer, fontWeight: FontWeight.w600)),
-                subtitle: Text(r['hint'] as String, style: TextStyle(color: s.onPrimaryContainer)),
-                trailing: IconButton(icon: const Icon(Icons.close), onPressed: () => setState(() => route = null)),
+      ),
+      // Mặt bằng chiếm toàn bộ phần còn lại
+      Expanded(
+        child: m == null
+            ? const Center(child: CircularProgressIndicator())
+            : Padding(
+                padding: const EdgeInsets.fromLTRB(8, 4, 8, 0),
+                child: LotPlanView(m,
+                    onSlot: _slotSheet,
+                    route: cellsFrom(r?['path']),
+                    exitRoute: cellsFrom(r?['exitPath']),
+                    highlight: r?['slot'] as String?),
               ),
-            ),
-        ],
-      ]),
-    );
+      ),
+      if (r != null)
+        Material(
+          color: s.primaryContainer,
+          child: ListTile(
+            dense: true,
+            leading: Icon(Icons.route, color: s.onPrimaryContainer),
+            title: Text('Ô ${r['slot']} · ${r['distance']} ô từ cổng', style: TextStyle(color: s.onPrimaryContainer, fontWeight: FontWeight.w600)),
+            subtitle: Text(r['hint'] as String, style: TextStyle(color: s.onPrimaryContainer, fontSize: 12)),
+            trailing: IconButton(icon: const Icon(Icons.close), onPressed: () => setState(() => route = null)),
+          ),
+        ),
+      Padding(padding: const EdgeInsets.fromLTRB(8, 4, 8, 6), child: LotLegend(withRoute: r != null)),
+    ]);
   }
 }
 
@@ -216,12 +226,12 @@ class _TypeSummary extends StatelessWidget {
       }
       by[code] = x;
     }
-    return Wrap(spacing: 8, runSpacing: 8, children: [
-      for (final e in by.entries)
-        Chip(
-          avatar: Icon(vehicleIcon(e.key), size: 18, color: s.primary),
-          label: Text('${vehicleName(e.key)}: ${e.value.visitor} ô khách trống / ${e.value.total}'),
-        ),
-    ]);
+    final t = Theme.of(context).textTheme;
+    return Text(
+      'Trống cho khách: ${[for (final e in by.entries) '${vehicleName(e.key).toLowerCase()} ${e.value.visitor}/${e.value.total}'].join(' · ')}',
+      style: t.labelSmall?.copyWith(color: s.onSurfaceVariant),
+      maxLines: 2,
+      overflow: TextOverflow.ellipsis,
+    );
   }
 }

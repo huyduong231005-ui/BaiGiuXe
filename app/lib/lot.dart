@@ -52,8 +52,30 @@ typedef Cell = (int, int);
 /// Đường đi từ API ([[hàng, cột], ...]) -> danh sách ô.
 List<Cell> cellsFrom(Object? path) => [for (final p in (path as List? ?? const [])) ((p as List)[0] as int, p[1] as int)];
 
+/// Xoay mặt bằng 90° theo chiều kim đồng hồ: ô (hàng r, cột c) -> (c, số hàng - 1 - r).
+/// Dùng khi bãi nằm ngang mà màn hình đứng (ô to hơn, dễ nhìn hơn); chữ vẫn vẽ đứng thẳng.
+({List<String> layout, Map<String, Rec> slots, List<Cell> route, List<Cell> exitRoute}) rotatePlan(
+    List<String> layout, Map<String, Rec> slots, List<Cell> route, List<Cell> exitRoute) {
+  final rows = layout.length, cols = layout[0].length;
+  Cell rot(Cell p) => (p.$2, rows - 1 - p.$1);
+  return (
+    layout: [for (var i = 0; i < cols; i++) String.fromCharCodes([for (var j = 0; j < rows; j++) layout[rows - 1 - j].codeUnitAt(i)])],
+    slots: {
+      for (final e in slots.entries)
+        () {
+          final p = e.key.split(',').map(int.parse).toList();
+          final q = rot((p[0], p[1]));
+          return '${q.$1},${q.$2}';
+        }(): e.value,
+    },
+    route: route.map(rot).toList(),
+    exitRoute: exitRoute.map(rot).toList(),
+  );
+}
+
 /// Mặt bằng bãi vẽ như thật: tường, đường nhựa có vạch giữa làn, cổng VÀO / RA, vạch kẻ ô đậu tô màu theo trạng thái,
-/// tên khu, và đường dẫn từ cổng tới ô (route) + từ ô ra cổng (exitRoute). Phóng to / kéo bằng 2 ngón tay.
+/// tên khu, và đường dẫn từ cổng tới ô (route) + từ ô ra cổng (exitRoute). Tự xoay để ô to nhất trong khung,
+/// phóng to / kéo bằng ngón tay.
 class LotPlanView extends StatelessWidget {
   const LotPlanView(this.map,
       {super.key, this.route = const [], this.exitRoute = const [], this.highlight, this.onSlot, this.zoomable = true, this.maxHeight});
@@ -63,53 +85,53 @@ class LotPlanView extends StatelessWidget {
   final String? highlight;
   final void Function(Rec slot)? onSlot;
   final bool zoomable;
-  final double? maxHeight;
+  final double? maxHeight; // giới hạn chiều cao khi đặt trong danh sách cuộn
 
   @override
   Widget build(BuildContext context) {
-    final layout = (map['layout'] as List? ?? const []).cast<String>();
-    if (layout.isEmpty) {
+    final layout0 = (map['layout'] as List? ?? const []).cast<String>();
+    if (layout0.isEmpty) {
       return const Padding(padding: EdgeInsets.all(24), child: Text('Chưa vẽ mặt bằng bãi', textAlign: TextAlign.center));
     }
-    final slots = <String, Rec>{};
+    final slots0 = <String, Rec>{};
     final zoneType = <String, String>{};
     for (final z in (map['zones'] as List).cast<Rec>()) {
       zoneType[z['name'] as String] = z['vehicle_type'] as String;
       for (final s in (z['slots'] as List).cast<Rec>()) {
-        slots['${s['row']},${s['col']}'] = s;
+        slots0['${s['row']},${s['col']}'] = s;
       }
     }
     return LayoutBuilder(builder: (context, box) {
-      final cols = layout[0].length, rows = layout.length;
-      var cell = box.maxWidth / cols;
-      if (maxHeight != null && cell * rows > maxHeight!) cell = maxHeight! / rows;
+      final h = maxHeight ?? (box.maxHeight.isFinite ? box.maxHeight : double.infinity);
+      double cellFor(int rows, int cols) => math.min(box.maxWidth / cols, h / rows);
+      final r0 = layout0.length, c0 = layout0[0].length;
+      final turn = cellFor(c0, r0) > cellFor(r0, c0) * 1.15; // xoay nếu ô to hơn rõ rệt
+      final p = turn ? rotatePlan(layout0, slots0, route, exitRoute) : (layout: layout0, slots: slots0, route: route, exitRoute: exitRoute);
+      final rows = p.layout.length, cols = p.layout[0].length;
+      final cell = cellFor(rows, cols);
       final size = Size(cell * cols, cell * rows);
-      final paint = CustomPaint(
-        size: size,
-        painter: LotPainter(
-          layout: layout,
-          slots: slots,
-          zoneType: zoneType,
-          route: route,
-          exitRoute: exitRoute,
-          highlight: highlight,
-          scheme: Theme.of(context).colorScheme,
-        ),
-      );
-      final tappable = GestureDetector(
+      final painted = GestureDetector(
         onTapUp: onSlot == null
             ? null
             : (d) {
-                final s = slots['${(d.localPosition.dy / cell).floor()},${(d.localPosition.dx / cell).floor()}'];
+                final s = p.slots['${(d.localPosition.dy / cell).floor()},${(d.localPosition.dx / cell).floor()}'];
                 if (s != null) onSlot!(s);
               },
-        child: paint,
+        child: CustomPaint(
+          size: size,
+          painter: LotPainter(
+            layout: p.layout,
+            slots: p.slots,
+            zoneType: zoneType,
+            route: p.route,
+            exitRoute: p.exitRoute,
+            highlight: highlight,
+            scheme: Theme.of(context).colorScheme,
+          ),
+        ),
       );
       return Center(
-        child: SizedBox.fromSize(
-          size: size,
-          child: zoomable ? InteractiveViewer(maxScale: 6, child: tappable) : tappable,
-        ),
+        child: SizedBox.fromSize(size: size, child: zoomable ? InteractiveViewer(maxScale: 5, child: painted) : painted),
       );
     });
   }
@@ -297,11 +319,11 @@ class LotLegend extends StatelessWidget {
     final s = Theme.of(context).colorScheme;
     final t = Theme.of(context).textTheme;
     Widget dot(Color c, String label) => Row(mainAxisSize: MainAxisSize.min, children: [
-          Container(width: 12, height: 12, decoration: BoxDecoration(color: c, borderRadius: BorderRadius.circular(3))),
-          const SizedBox(width: 4),
-          Text(label, style: t.labelSmall),
+          Container(width: 9, height: 9, decoration: BoxDecoration(color: c, borderRadius: BorderRadius.circular(2))),
+          const SizedBox(width: 3),
+          Text(label, style: t.labelSmall?.copyWith(fontSize: 10)),
         ]);
-    return Wrap(spacing: 12, runSpacing: 4, children: [
+    return Wrap(spacing: 10, runSpacing: 2, alignment: WrapAlignment.center, children: [
       for (final e in slotStateNames.entries) dot(slotColor(s, e.key), e.value),
       dot(LotPainter.asphalt, 'Đường đi'),
       dot(Colors.green.shade700, 'Cổng vào'),

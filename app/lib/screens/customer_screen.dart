@@ -58,23 +58,24 @@ void showMySlot(BuildContext context, String slot) => Navigator.push(
               if (!snap.hasData) return Center(child: snap.hasError ? Text('${snap.error}') : const CircularProgressIndicator());
               final r = snap.data![2] as Rec;
               final s = Theme.of(c).colorScheme;
-              return ListView(padding: const EdgeInsets.all(16), children: [
-                Card(
+              return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                Material(
                   color: s.primaryContainer,
                   child: ListTile(
+                    dense: true,
                     leading: Icon(Icons.route, color: s.onPrimaryContainer),
-                    title: Text('Ô $slot', style: TextStyle(color: s.onPrimaryContainer, fontWeight: FontWeight.bold)),
-                    subtitle: Text(r['hint'] as String, style: TextStyle(color: s.onPrimaryContainer)),
+                    title: Text('Ô $slot · ${r['distance']} ô từ cổng vào', style: TextStyle(color: s.onPrimaryContainer, fontWeight: FontWeight.bold)),
+                    subtitle: Text(r['hint'] as String, style: TextStyle(color: s.onPrimaryContainer, fontSize: 12)),
                   ),
                 ),
-                const SizedBox(height: 12),
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(12),
-                  child: LotPlanView(snap.data![1] as Rec,
-                      route: cellsFrom(r['path']), exitRoute: cellsFrom(r['exitPath']), highlight: slot),
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.all(8),
+                    child: LotPlanView(snap.data![1] as Rec,
+                        route: cellsFrom(r['path']), exitRoute: cellsFrom(r['exitPath']), highlight: slot),
+                  ),
                 ),
-                const SizedBox(height: 8),
-                const LotLegend(withRoute: true),
+                const Padding(padding: EdgeInsets.fromLTRB(8, 0, 8, 8), child: LotLegend(withRoute: true)),
               ]);
             },
           ),
