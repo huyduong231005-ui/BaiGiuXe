@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bãi giữ xe API</title>
+  <style>
+    :root { --bg: #0b1220; --card: #111a2e; --text: #e2e8f0; --muted: #94a3b8; --line: #1e293b; --accent: #2dd4bf; }
+    body { margin: 0; font-family: ui-monospace, Consolas, monospace; background: var(--bg); color: var(--text); font-size: 14px; }
+    main { max-width: 960px; margin: 0 auto; padding: 32px 16px 48px; }
+    h1 { font-size: 26px; margin: 0 0 4px; }
+    h2 { font-size: 16px; color: var(--accent); margin: 28px 0 8px; }
+    .muted { color: var(--muted); }
+    .status { display: inline-block; margin-top: 12px; padding: 4px 10px; border-radius: 6px; background: var(--card); }
+    .ok { color: #4ade80; } .bad { color: #f87171; }
+    code { background: var(--card); padding: 2px 6px; border-radius: 4px; }
+    table { width: 100%; border-collapse: collapse; background: var(--card); border-radius: 8px; overflow: hidden; }
+    td { padding: 7px 10px; border-top: 1px solid var(--line); vertical-align: top; }
+    tr:first-child td { border-top: 0; }
+    .m { font-weight: 700; width: 64px; } .GET { color: #60a5fa; } .POST { color: #4ade80; } .PATCH { color: #facc15; } .PUT { color: #c084fc; } .DELETE { color: #f87171; }
+    .p { white-space: nowrap; } .r { color: var(--muted); width: 110px; }
+    a { color: var(--accent); }
+    .live { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 16px; }
+    .tile { background: var(--card); border-radius: 8px; padding: 14px 16px; }
+    .tile b { display: block; font-size: 32px; margin-top: 4px; }
+    .bar { height: 8px; background: var(--line); border-radius: 4px; margin-top: 12px; overflow: hidden; }
+    .bar i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .4s; }
+    @media (max-width: 600px) { .live { grid-template-columns: 1fr; } .p { white-space: normal; } }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Bãi giữ xe API</h1>
+  <div class="muted">REST API cho app Flutter quản lý bãi giữ xe (ESP32 + RFID + nhận diện biển số) · Node.js + Express + Supabase PostgreSQL · deploy Render</div>
+  <div class="status">GET <a href="/health">/health</a> → <span id="health">đang kiểm tra…</span></div>
+  <p class="muted">Base URL: <code id="base"></code> · Dữ liệu JSON · Xác thực: <code>Authorization: Bearer &lt;JWT&gt;</code> · Lỗi: <code>{"message": "..."}</code> · Thử trực tiếp: <a href="/docs">/docs</a></p>
+
+  <h2>Bãi xe lúc này <span class="muted" id="updated"></span></h2>
+  <div class="live">
+    <div class="tile">Chỗ trống<b id="free">…</b></div>
+    <div class="tile">Xe trong bãi<b id="occupied">…</b></div>
+    <div class="tile">Sức chứa<b id="capacity">…</b></div>
+  </div>
+  <div class="bar"><i id="used"></i></div>
+  <p class="muted">Lấy từ <a href="/status">GET /status</a>, tự làm mới mỗi 5 giây: quẹt thẻ ở cổng là số liệu đổi theo.</p>
+
+  <h2>Xác thực</h2>
+  <table>
+    <tr><td class="m POST">POST</td><td class="p">/auth/register</td><td>Đăng ký bằng email → gửi OTP (tài khoản mới có vai trò bảo vệ)</td><td class="r">công khai</td></tr>
+    <tr><td class="m POST">POST</td><td class="p">/auth/register/verify</td><td>Xác minh OTP đăng ký → JWT</td><td class="r">công khai</td></tr>
+    <tr><td class="m POST">POST</td><td class="p">/auth/login</td><td>Tên đăng nhập + mật khẩu → gửi Email OTP</td><td class="r">công khai</td></tr>
+    <tr><td class="m POST">POST</td><td class="p">/auth/login/verify</td><td>Xác minh OTP đăng nhập → JWT</td><td class="r">công khai</td></tr>
+    <tr><td class="m POST">POST</td><td class="p">/auth/google</td><td>Đăng nhập Google OAuth 2.0 (xác thực idToken) → JWT</td><td class="r">công khai</td></tr>
+    <tr><td class="m GET">GET</td><td class="p">/me · PATCH /me</td><td>Tài khoản đang đăng nhập · đổi họ tên, mật khẩu</td><td class="r">đã đăng nhập</td></tr>
+  </table>
+
+  <h2>Bãi xe, lượt gửi, doanh thu</h2>
+  <table>
+    <tr><td class="m GET">GET</td><td class="p">/status</td><td>Sức chứa, số xe đang gửi, số chỗ trống</td><td class="r">công khai</td></tr>
+    <tr><td class="m POST">POST</td><td class="p">/fees/quote</td><td>Tính phí theo bảng giá hiện tại: giá ngày / số đêm × giá đêm, vé tháng miễn phí</td><td class="r">công khai</td></tr>
+    <tr><td class="m GET">GET</td><td class="p">/sessions</td><td>Lượt gửi theo ngày (?date=YYYY-MM-DD), tìm biển (?plate=), xe đang trong bãi (?open=true), kèm tổng doanh thu</td><td class="r">quản lý</td></tr>
+    <tr><td class="m GET">GET</td><td class="p">/sessions/:id/fee</td><td>Phí nếu cho xe ra ngay bây giờ</td><td class="r">quản lý</td></tr>
+    <tr><td class="m POST">POST</td><td class="p">/sessions/:id/release</td><td>Mất thẻ: đóng lượt, tính phí, mở barrier cổng ra</td><td class="r">quản lý</td></tr>
+    <tr><td class="m POST">POST</td><td class="p">/gate/open</td><td>Mở barrier cổng ra từ xa (ĐT cổng ra chuyển lệnh qua MQTT tới ESP32)</td><td class="r">quản lý</td></tr>
+    <tr><td class="m GET">GET</td><td class="p">/events</td><td>Nhật ký cổng: quẹt thẻ, mở tay, khẩn cấp, chấm công, lệnh mở cổng</td><td class="r">quản lý</td></tr>
+    <tr><td class="m GET">GET</td><td class="p">/stats/revenue</td><td>Doanh thu và số lượt theo ngày (?from=&amp;to=, mặc định 7 ngày)</td><td class="r">quản lý</td></tr>
+  </table>
+
+  <h2>Thẻ RFID, cài đặt, nhận diện biển số</h2>
+  <table>
+    <tr><td class="m GET">GET</td><td class="p">/cards</td><td>Danh sách thẻ, tìm UID / biển / chủ xe · POST thêm · PATCH /:uid sửa, khoá · DELETE /:uid</td><td class="r">quản lý</td></tr>
+    <tr><td class="m GET">GET</td><td class="p">/scans/latest</td><td>Thẻ vừa quẹt ở cổng bất kỳ sau mốc ?since= (màn thêm thẻ tự điền UID)</td><td class="r">quản lý</td></tr>
+    <tr><td class="m GET">GET</td><td class="p">/settings · PUT</td><td>Sức chứa, giá ngày, giá đêm, mốc tính qua đêm</td><td class="r">quản lý</td></tr>
+    <tr><td class="m POST">POST</td><td class="p">/plates/recognize</td><td>Gửi ảnh JPEG → biển số, độ tin cậy, các phương án đọc (token Plate Recognizer nằm trên máy chủ)</td><td class="r">quản lý, ĐT camera</td></tr>
+    <tr><td class="m GET">GET</td><td class="p">/plates/url</td><td>Đường dẫn ký có hạn 1 giờ cho ảnh biển số trong bucket private</td><td class="r">quản lý</td></tr>
+  </table>
+
+  <h2>Bảo vệ, ca trực, chấm công</h2>
+  <table>
+    <tr><td class="m GET">GET</td><td class="p">/guards</td><td>Bảo vệ (có PIN, vân tay, đang trực ca nào) · POST · PATCH /:id · DELETE /:id — PIN băm bcrypt</td><td class="r">quản lý</td></tr>
+    <tr><td class="m GET">GET</td><td class="p">/shifts</td><td>Ca trực · POST · PUT /:id · DELETE /:id (ca qua đêm khi giờ kết thúc ≤ giờ bắt đầu)</td><td class="r">quản lý</td></tr>
+    <tr><td class="m GET">GET</td><td class="p">/attendance</td><td>Bảng công tháng (?month=YYYY-MM): tổng giờ, số lần trễ, về sớm, quên chấm ra</td><td class="r">quản lý</td></tr>
+    <tr><td class="m GET">GET</td><td class="p">/me/attendance</td><td>Bảng công của chính bảo vệ đang đăng nhập</td><td class="r">bảo vệ</td></tr>
+  </table>
+
+  <h2>Quản trị</h2>
+  <table>
+    <tr><td class="m GET">GET</td><td class="p">/admin/users</td><td>Tài khoản (?q=, ?role=) · PATCH /:id đổi vai trò, khoá, gắn hồ sơ bảo vệ · DELETE /:id</td><td class="r">admin</td></tr>
+  </table>
+
+  <p class="muted" style="margin-top:24px">Mã nguồn: <a href="https://github.com/nguyenchitu2005-jpg/BaiGiuXe">github.com/nguyenchitu2005-jpg/BaiGiuXe</a> (thư mục backend/)</p>
+</main>
+<script>
+  document.getElementById('base').textContent = location.origin;
+  const el = document.getElementById('health');
+  fetch('/health').then((r) => r.json())
+    .then((d) => { el.textContent = d.ok ? '{"ok":true} – đang hoạt động' : 'lỗi'; el.className = d.ok ? 'ok' : 'bad'; })
+    .catch(() => { el.textContent = 'không kết nối được'; el.className = 'bad'; });
+
+  const set = (id, v) => { document.getElementById(id).textContent = v; };
+  async function refresh() {
+    try {
+      const s = await (await fetch('/status')).json();
+      set('free', s.free); set('occupied', s.occupied); set('capacity', s.capacity);
+      const used = s.capacity ? Math.min(100, Math.round((s.occupied / s.capacity) * 100)) : 0;
+      const bar = document.getElementById('used');
+      bar.style.width = used + '%';
+      bar.style.background = used >= 90 ? '#f87171' : used >= 70 ? '#fb923c' : '';
+      set('updated', '· cập nhật ' + new Date().toLocaleTimeString('vi-VN'));
+    } catch { set('updated', '· mất kết nối'); }
+  }
+  refresh();
+  setInterval(refresh, 5000);
+</script>
+</body>
+</html>

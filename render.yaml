@@ -1,0 +1,30 @@
+# Render Blueprint cho REST API (thư mục backend/). Dữ liệu nằm ở Supabase, các khoá bí mật nhập trên Render.
+services:
+  - type: web
+    name: bai-giu-xe-api
+    runtime: node
+    plan: free
+    region: singapore
+    rootDir: backend
+    buildCommand: npm ci --omit=dev
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: TZ
+        value: Asia/Ho_Chi_Minh # tính phí qua đêm, chia ngày doanh thu theo giờ Việt Nam
+      - key: JWT_SECRET
+        generateValue: true
+      - key: DATABASE_URL # Supabase -> Connect -> Session pooler (IPv4)
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_KEY # Project Settings -> API Keys -> secret / service_role
+        sync: false
+      - key: PLATE_TOKEN
+        sync: false
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: BREVO_API_KEY
+        sync: false
+      - key: MAIL_FROM
+        sync: false
