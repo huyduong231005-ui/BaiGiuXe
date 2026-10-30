@@ -261,11 +261,13 @@ export function manageRouter() {
     res.json(row(await Card.findOneAndUpdate({ uid }, changes, { returnDocument: 'after' }).lean()));
   });
 
-  // Thẻ đã có lượt gửi thì không xoá được (giữ lịch sử), như khoá ngoại cũ.
+  // Xoá thẻ bất cứ lúc nào, trừ khi xe của thẻ đang trong bãi. Lịch sử ra vào cũ vẫn giữ (lượt gửi lưu UID thẻ).
   router.delete('/cards/:uid', async (req, res) => {
     const uid = req.params.uid.toUpperCase();
     if (!(await Card.exists({ uid }))) throw new HttpError(404, 'Không có thẻ này');
-    if (await Session.exists({ card_uid: uid })) throw new HttpError(409, IN_USE);
+    if (await Session.exists({ card_uid: uid, parked: true })) {
+      throw new HttpError(409, 'Xe của thẻ này đang trong bãi: cho xe ra (Tổng quan → chạm vào xe) rồi mới xoá thẻ');
+    }
     await Card.deleteOne({ uid });
     await TicketRequest.updateMany({ card_uid: uid }, { card_uid: null });
     await Slot.updateMany({ card_uid: uid }, { card_uid: null });

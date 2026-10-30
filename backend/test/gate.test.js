@@ -1,6 +1,6 @@
 import { after, before, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ago, loginAs, startApp } from './helpers.js';
+import { ago, loginAs, motorbikeFeeNow, startApp } from './helpers.js';
 
 let ctx, token, guardId;
 const IMG = 'in/2026-10-30/1761800000000_A1B2C3D4.jpg';
@@ -30,11 +30,12 @@ test('quẹt thẻ: API kiểm tra, mở / đóng lượt gửi, ghi nhật ký,
 
   assert.equal((await scan({ gate: 'out', uid: 'A1B2C3D4', plate: '30A11111' })).body.message, 'Sai bien so');
   const ra = (await scan({ gate: 'out', uid: 'A1B2C3D4', plate: '59X112346', candidates: ['59X112345'] })).body;
-  assert.deepEqual([ra.ok, ra.open, ra.fee, ra.l2, ra.status.free], [true, true, 5000, 'Phi: 5000d', 50]);
+  const fee = motorbikeFeeNow(new Date(Date.now() - 1000)); // xe vào vài giây trước
+  assert.deepEqual([ra.ok, ra.open, ra.fee, ra.l2, ra.status.free], [true, true, fee, `Phi: ${fee}d`, 50]);
   assert.equal((await scan({ gate: 'out', uid: 'A1B2C3D4', plate: '59X112345' })).body.message, 'Khong co luot gui');
 
   const s = (await ctx.call('GET', '/sessions?plate=59X112345', { token })).body.sessions[0];
-  assert.deepEqual([s.img_in, s.fee, s.plate_out], [IMG, 5000, '59X112346']);
+  assert.deepEqual([s.img_in, s.fee, s.plate_out], [IMG, fee, '59X112346']);
   const [last] = (await ctx.call('GET', '/events?limit=1', { token })).body;
   assert.deepEqual([last.kind, last.status, last.uid], ['scan', 'denied', 'A1B2C3D4']);
 });
@@ -44,11 +45,13 @@ test('bảo vệ mở tay: sai PIN bị từ chối, đúng PIN đóng lượt b
   const enroll = (await ctx.call('POST', '/gate/auth', { token, body: { pin: '2468', enroll: true } })).body;
   assert.deepEqual([enroll.ok, enroll.guardId], [true, guardId]);
 
-  await ctx.db.insert(ctx.db.Session, { card_uid: 'A1B2C3D4', plate_in: '59X112345', time_in: ago(1) });
+  const timeIn = ago(1);
+  const fee = motorbikeFeeNow(timeIn);
+  await ctx.db.insert(ctx.db.Session, { card_uid: 'A1B2C3D4', plate_in: '59X112345', time_in: timeIn });
   const r = (await ctx.call('POST', '/gate/auth', { token, body: { pin: '2468', denied: { uid: 'A1B2C3D4', plate: '59X112345' } } })).body;
-  assert.match(r.message, /PIN bao ve #\d+ \| the A1B2C3D4 \| Phi: 5000d/);
+  assert.match(r.message, new RegExp(`PIN bao ve #\\d+ \\| the A1B2C3D4 \\| Phi: ${fee}d`));
   const s = (await ctx.call('GET', '/sessions?plate=59X112345', { token })).body.sessions.at(-1); // lượt vào 1 giờ trước
-  assert.deepEqual([s.override_name, s.fee], ['Nguyễn Văn Tuấn', 5000]);
+  assert.deepEqual([s.override_name, s.fee], ['Nguyễn Văn Tuấn', fee]);
 });
 
 test('đăng ký vân tay rồi chấm công bằng vân tay: vào ca, ra ca', async () => {

@@ -1,6 +1,6 @@
 import { after, before, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ago, loginAs, startApp } from './helpers.js';
+import { ago, loginAs, motorbikeFeeNow, startApp } from './helpers.js';
 
 let ctx, token;
 before(async () => {
@@ -9,7 +9,7 @@ before(async () => {
 });
 after(() => ctx.close());
 
-test('thẻ: thêm, chuẩn hoá biển, vé tháng bắt buộc biển, sửa, tìm, không xoá được thẻ đã có lịch sử', async () => {
+test('thẻ: thêm, chuẩn hoá biển, vé tháng bắt buộc biển, sửa, tìm, xe đang trong bãi thì chưa xoá được thẻ', async () => {
   const bad = await ctx.call('POST', '/cards', { token, body: { uid: 'A1B2C3D4', kind: 'monthly' } });
   assert.deepEqual([bad.status, bad.body.message], [400, 'Vé tháng cần biển số']);
   assert.equal((await ctx.call('POST', '/cards', { token, body: { uid: 'xyz' } })).status, 400);
@@ -25,7 +25,13 @@ test('thẻ: thêm, chuẩn hoá biển, vé tháng bắt buộc biển, sửa, 
 
   await ctx.db.insert(ctx.db.Session, { card_uid: 'A1B2C3D4', plate_in: '59X112345' });
   const del = await ctx.call('DELETE', '/cards/A1B2C3D4', { token });
-  assert.equal(del.status, 409);
+  assert.deepEqual([del.status, /đang trong bãi/.test(del.body.message)], [409, true]);
+  // Thẻ đã có lịch sử nhưng xe đã ra: xoá được, lịch sử vẫn còn
+  await ctx.call('POST', '/cards', { token, body: { uid: '33333333' } });
+  await ctx.db.insert(ctx.db.Session, { card_uid: '33333333', plate_in: '51F33333', time_in: new Date('2025-01-01T08:00:00+07:00'),
+    time_out: new Date('2025-01-01T10:00:00+07:00'), fee: 5000, parked: false });
+  assert.equal((await ctx.call('DELETE', '/cards/33333333', { token })).status, 204);
+  assert.equal((await ctx.call('GET', '/sessions?plate=51F33333&date=2025-01-01', { token })).body.count, 1);
 });
 
 test('số chỗ trống công khai, lịch sử theo ngày + doanh thu, phí tạm tính', async () => {
@@ -51,9 +57,10 @@ test('số chỗ trống công khai, lịch sử theo ngày + doanh thu, phí t�
 test('cho xe ra khi mất thẻ: đóng lượt, tính phí, tạo lệnh mở cổng', async () => {
   await ctx.call('POST', '/cards', { token, body: { uid: '22222222' } });
   const s = await ctx.db.insert(ctx.db.Session, { card_uid: '22222222', plate_in: '51F00001', time_in: ago(2) });
-  assert.equal((await ctx.call('GET', `/sessions/${s.id}/fee`, { token })).body.fee, 5000); // giá ngày xe máy
+  const fee = motorbikeFeeNow(ago(2)); // 5.000đ ban ngày, 10.000đ nếu đã qua 22:00
+  assert.equal((await ctx.call('GET', `/sessions/${s.id}/fee`, { token })).body.fee, fee);
   const r = await ctx.call('POST', `/sessions/${s.id}/release`, { token });
-  assert.deepEqual([r.status, r.body.fee], [200, 5000]);
+  assert.deepEqual([r.status, r.body.fee], [200, fee]);
   assert.equal((await ctx.call('POST', `/sessions/${s.id}/release`, { token })).status, 409);
   const [ev] = (await ctx.call('GET', '/events?limit=1', { token })).body;
   assert.deepEqual([ev.kind, ev.status, ev.gate], ['open_cmd', 'pending', 'out']);

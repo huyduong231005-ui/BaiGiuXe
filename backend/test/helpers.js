@@ -3,6 +3,7 @@ import mongoose from 'mongoose';
 import { MongoMemoryServer } from 'mongodb-memory-server';
 import { createApp } from '../src/app.js';
 import * as db from '../src/db.js';
+import { calcFee } from '../src/rules.js';
 
 process.env.TZ = 'Asia/Ho_Chi_Minh';
 
@@ -57,3 +58,7 @@ export async function loginAs(ctx, role, username = role) {
 
 const H = 3600e3;
 export const ago = (h) => new Date(Date.now() - h * H);
+
+/** Phí xe máy (giá mặc định) cho lượt vào lúc timeIn, ra bây giờ: test không phụ thuộc giờ chạy (ngày / đêm). */
+export const motorbikeFeeNow = (timeIn) =>
+  calcFee(timeIn, new Date(), { night_mark: '22:00:00', price_day: 5000, price_night: 10000 });
