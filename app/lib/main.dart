@@ -25,9 +25,15 @@ late final SharedPreferences prefs;
 /// Khoá prefs: máy này đăng nhập ở chế độ "Thiết bị camera" (chọn vai trò theo máy: quản lý / camera cổng).
 const deviceModeKey = 'device_mode';
 
+/// Navigator gốc: đăng xuất / hết phiên thì đóng mọi trang đang mở chồng (Cài đặt, Lịch sử...) để về màn đăng nhập.
+final navigatorKey = GlobalKey<NavigatorState>();
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   prefs = await SharedPreferences.getInstance();
+  api.session.addListener(() {
+    if (api.session.value == null) navigatorKey.currentState?.popUntil((r) => r.isFirst);
+  });
   api.restore(prefs);
   runApp(const App());
 }
@@ -71,6 +77,7 @@ class App extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => MaterialApp(
+        navigatorKey: navigatorKey,
         title: 'Bãi giữ xe',
         theme: _theme(Brightness.light),
         darkTheme: _theme(Brightness.dark),
@@ -239,6 +246,23 @@ class MoreScreen extends StatelessWidget {
   final bool admin;
   final VoidCallback? onChangeRole;
 
+  /// Chọn cổng rồi mở màn camera ngay với tài khoản đang đăng nhập (không cần đăng xuất / chế độ thiết bị).
+  Future<void> _openCamera(BuildContext context) async {
+    final gate = await showModalBottomSheet<String>(
+      context: context,
+      builder: (c) => SafeArea(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          const ListTile(title: Text('Máy này làm camera cho cổng nào?', style: TextStyle(fontWeight: FontWeight.w600))),
+          ListTile(leading: const Icon(Icons.login), title: const Text('Cổng vào'), onTap: () => Navigator.pop(c, 'in')),
+          ListTile(leading: const Icon(Icons.logout), title: const Text('Cổng ra'), onTap: () => Navigator.pop(c, 'out')),
+          ListTile(leading: const Icon(Icons.compare_arrows), title: const Text('Cả 2 cổng (1 điện thoại)'), onTap: () => Navigator.pop(c, 'both')),
+        ]),
+      ),
+    );
+    if (gate == null || !context.mounted) return;
+    await Navigator.push(context, MaterialPageRoute(builder: (c) => CameraScreen(gate: gate, onExit: () => Navigator.pop(c))));
+  }
+
   void _open(BuildContext context, String title, Widget body) => Navigator.push(context,
       MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: Text(title)), body: SafeArea(child: body))));
 
@@ -249,6 +273,9 @@ class MoreScreen extends StatelessWidget {
       (Icons.security, 'Bảo vệ & bảng công', 'Bảo vệ, PIN, vân tay, ca trực, chấm công', () => _open(context, 'Bảo vệ', const GuardsScreen())),
       if (admin)
         (Icons.manage_accounts, 'Tài khoản', 'Phân quyền admin / quản lý / bảo vệ / khách', () => _open(context, 'Tài khoản', const AccountsScreen(embedded: true))),
+      if (!Platform.isMacOS)
+        (Icons.videocam_outlined, 'Camera cổng (quét biển số)', 'Biến máy này thành camera cổng: quẹt thẻ là tự chụp, đọc biển, chỉ ô',
+            () => _openCamera(context)),
       (Icons.document_scanner_outlined, 'Nhận diện biển số', 'Tốc độ, độ chính xác đo trên các lượt quẹt thật',
           () => Navigator.push(context, MaterialPageRoute(builder: (_) => const OcrStatsScreen()))),
       (Icons.settings, 'Cài đặt', 'Loại xe & bảng giá, thông tin bãi, ca trực, đăng xuất',
