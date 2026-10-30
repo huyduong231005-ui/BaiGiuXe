@@ -1,15 +1,13 @@
 import 'package:flutter/material.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../api.dart';
 import '../logic.dart';
 import '../main.dart';
 
-final _db = Supabase.instance.client;
-
 class SettingsScreen extends StatefulWidget {
-  const SettingsScreen({super.key, required this.onChangeRole});
+  const SettingsScreen({super.key, this.onChangeRole});
 
-  final VoidCallback onChangeRole;
+  final VoidCallback? onChangeRole; // null: đăng nhập bằng tài khoản API, không gắn vai trò theo máy
 
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
@@ -30,7 +28,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _load() async {
     try {
-      final s = await _db.from('settings').select().single();
+      final s = await api.get('/settings') as Rec;
       if (!mounted) return;
       setState(() {
         capacity.text = '${s['capacity']}';
@@ -42,10 +40,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
       if (mounted) showError(context, e);
     }
     try {
-      final sh = await _db.from('shift_defs').select().order('start_time');
-      if (mounted) setState(() => shifts = sh);
+      final sh = await api.get('/shifts') as List;
+      if (mounted) setState(() => shifts = sh.cast<Rec>());
     } catch (e) {
-      debugPrint('[settings] chua co bang shift_defs (chay migration 0004): $e');
+      if (mounted) showError(context, e);
     }
   }
 
@@ -93,9 +91,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
     if (ok != true || !mounted) return;
     if (name.text.trim().isEmpty) return showError(context, 'Cần nhập tên ca');
-    final row = {'name': name.text.trim(), 'start_time': fmt(start), 'end_time': fmt(end)};
+    final row = {'name': name.text.trim(), 'startTime': fmt(start), 'endTime': fmt(end)};
     try {
-      sh == null ? await _db.from('shift_defs').insert(row) : await _db.from('shift_defs').update(row).eq('id', sh['id']);
+      sh == null ? await api.post('/shifts', row) : await api.put('/shifts/${sh['id']}', row);
       _load();
     } catch (e) {
       if (mounted) showError(context, e);
@@ -104,7 +102,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _deleteShift(Rec sh) async {
     try {
-      await _db.from('shift_defs').delete().eq('id', sh['id']); // bảng công cũ vẫn giữ tên ca đã chép
+      await api.delete('/shifts/${sh['id']}'); // bảng công cũ vẫn giữ tên ca đã chép
       _load();
     } catch (e) {
       if (mounted) showError(context, e);
@@ -118,12 +116,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
       return showError(context, 'Mốc đêm dạng HH:MM');
     }
     try {
-      await _db.from('settings').update({
+      await api.put('/settings', {
         'capacity': ints[0],
-        'price_day': ints[1],
-        'price_night': ints[2],
-        'night_mark': nightMark.text.trim(),
-      }).eq('id', 1);
+        'priceDay': ints[1],
+        'priceNight': ints[2],
+        'nightMark': nightMark.text.trim(),
+      });
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Đã lưu')));
     } catch (e) {
       if (mounted) showError(context, e);
@@ -178,11 +176,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
       const SizedBox(height: 8),
       Card(
         child: Column(children: [
-          ListTile(leading: const Icon(Icons.swap_horiz), title: const Text('Đổi vai trò thiết bị'), onTap: widget.onChangeRole),
+          if (api.session.value case final u?)
+            ListTile(leading: const Icon(Icons.person_outline), title: Text(u.displayName), subtitle: Text('${u.email} · ${u.role}')),
+          if (widget.onChangeRole != null)
+            ListTile(leading: const Icon(Icons.swap_horiz), title: const Text('Đổi vai trò thiết bị'), onTap: widget.onChangeRole),
           ListTile(
             leading: Icon(Icons.logout, color: Theme.of(context).colorScheme.error),
             title: Text('Đăng xuất', style: TextStyle(color: Theme.of(context).colorScheme.error)),
-            onTap: () => Supabase.instance.client.auth.signOut(),
+            onTap: signOutAll,
           ),
         ]),
       ),

@@ -4,9 +4,13 @@ import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
+import '../api.dart';
 import '../esp_link.dart';
 import '../gate_station.dart';
 import '../main.dart' show ManagerHome, prefs;
+
+/// Render free ngủ sau 15 phút không có request; ping định kỳ để lượt quẹt thẻ không phải chờ API thức dậy.
+const _keepApiAwake = Duration(minutes: 10);
 
 /// Điện thoại gắn ở cổng, kiêm luôn màn quản lý.
 /// Màn camera ở lại liên tục để quét xe xếp hàng: mỗi lượt quẹt, GateStation tự chụp + nhận diện,
@@ -30,6 +34,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   String? error;
   double zoom = 1, maxZoom = 1;
   bool showCamera = true;
+  Timer? _ping;
 
   String get _zoomKey => 'zoom_${widget.gate}';
 
@@ -38,7 +43,11 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _init();
+    _wakeApi();
+    _ping = Timer.periodic(_keepApiAwake, (_) => _wakeApi());
   }
+
+  void _wakeApi() => api.get('/health').catchError((_) => null); // lỗi mạng: thử lại nhịp sau
 
   // Theo hướng dẫn của plugin camera: nhả camera khi app bị ẩn, mở lại khi quay về.
   // Nếu không, camera vẫn đẩy khung hình sau khi engine tách ra -> app crash lúc thoát.
@@ -88,6 +97,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
   @override
   void dispose() {
+    _ping?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     _release();
     super.dispose();

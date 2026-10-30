@@ -1,12 +1,14 @@
-import 'package:flutter/material.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
+import 'dart:async';
 
+import 'package:flutter/material.dart';
+
+import '../api.dart';
 import '../logic.dart';
 import '../main.dart';
 import 'attendance_screen.dart';
 
-final _db = Supabase.instance.client;
 final _pinRe = RegExp(r'^\d{4,8}$');
+const _refreshEvery = Duration(seconds: 10);
 
 /// Bảo vệ: tên, PIN mở cổng (phím A) và vân tay (đăng ký ở ESP32 bằng phím B).
 class GuardsScreen extends StatefulWidget {
@@ -17,45 +19,33 @@ class GuardsScreen extends StatefulWidget {
 }
 
 class _GuardsScreenState extends State<GuardsScreen> {
-  List<Rec> guards = [];
-  Map<int, Rec> onDuty = {}; // guard_id -> lượt chấm công đang mở
-  late final RealtimeChannel _ch;
+  List<Rec> guards = []; // kèm has_pin, on_duty_shift, on_duty_since (lượt chấm công đang mở)
+  Timer? _timer;
 
   @override
   void initState() {
     super.initState();
     _load();
-    // Bảng guards không có realtime. ĐT cổng ra ghi gate_events(override) ngay sau khi gán vân tay
-    // -> tải lại để thấy "Vân tay #id" mà không phải kéo làm mới.
-    _ch = _db
-        .channel('guards-refresh')
-        .onPostgresChanges(
-          event: PostgresChangeEvent.insert,
-          schema: 'public',
-          table: 'gate_events',
-          filter: PostgresChangeFilter(type: PostgresChangeFilterType.eq, column: 'kind', value: 'override'),
-          callback: (_) => _load(),
-        )
-        .subscribe();
+    // Tải lại định kỳ để thấy "Vân tay #id" / "Đang trực" ngay sau khi bảo vệ đăng ký / chấm công ở ESP32.
+    _timer = Timer.periodic(_refreshEvery, (_) => _load(quiet: true));
   }
 
   @override
   void dispose() {
-    _db.removeChannel(_ch);
+    _timer?.cancel();
     super.dispose();
   }
 
-  Future<void> _load() async {
+  Future<void> _load({bool quiet = false}) async {
     try {
-      final g = await _db.from('guards').select('id, name, finger_id, pin_hash').order('id');
-      if (mounted) setState(() => guards = g);
-      // Tách riêng: chưa chạy migration 0004 thì vẫn hiện được danh sách bảo vệ.
-      final a = await _db.from('attendance').select('guard_id, shift_name, time_in').isFilter('time_out', null);
-      if (mounted) setState(() => onDuty = {for (final x in a) x['guard_id'] as int: x});
+      final g = await api.get('/guards') as List;
+      if (mounted) setState(() => guards = g.cast<Rec>());
     } catch (e) {
-      if (mounted) showError(context, e);
+      if (mounted && !quiet) showError(context, e);
     }
   }
+
+  int get _onDuty => guards.where((g) => g['on_duty_since'] != null).length;
 
   Future<void> _editGuard([Rec? g]) async {
     final name = TextEditingController(text: g?['name'] as String?);
@@ -107,11 +97,9 @@ class _GuardsScreenState extends State<GuardsScreen> {
       return showError(context, 'PIN phải gồm 4-8 chữ số');
     }
     try {
-      final row = {'name': name.text.trim(), 'finger_id': int.tryParse(finger.text.trim())};
-      final id = g == null
-          ? (await _db.from('guards').insert(row).select('id').single())['id']
-          : (await _db.from('guards').update(row).eq('id', g['id']).select('id').single())['id'];
-      if (pin.text.isNotEmpty) await _db.rpc('set_guard_pin', params: {'p_id': id, 'p_pin': pin.text});
+      // API băm PIN bằng bcrypt trong Postgres; PIN để trống khi sửa = giữ nguyên.
+      final row = {'name': name.text.trim(), 'pin': pin.text, 'fingerId': int.tryParse(finger.text.trim())};
+      g == null ? await api.post('/guards', row) : await api.patch('/guards/${g['id']}', row);
       _load();
     } catch (e) {
       if (mounted) showError(context, e);
@@ -136,10 +124,11 @@ class _GuardsScreenState extends State<GuardsScreen> {
     );
     if (ok != true) return;
     try {
-      await _db.from('guards').delete().eq('id', g['id']);
+      await api.delete('/guards/${g['id']}');
       _load();
-    } catch (e) {
-      if (mounted) showError(context, 'Bảo vệ đã có lịch sử mở cổng hoặc chấm công, không xoá được. $e');
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      showError(context, e.status == 409 ? 'Bảo vệ đã có lịch sử mở cổng hoặc chấm công, không xoá được.' : e);
     }
   }
 
@@ -181,7 +170,7 @@ class _GuardsScreenState extends State<GuardsScreen> {
             child: ListTile(
               leading: const Icon(Icons.event_note),
               title: const Text('Bảng công', style: TextStyle(fontWeight: FontWeight.w600)),
-              subtitle: Text(onDuty.isEmpty ? 'Chưa ai trong ca' : '${onDuty.length} người đang trực'),
+              subtitle: Text(_onDuty == 0 ? 'Chưa ai trong ca' : '$_onDuty người đang trực'),
               trailing: const Icon(Icons.chevron_right),
               onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const AttendanceScreen())),
             ),
@@ -204,12 +193,12 @@ class _GuardsScreenState extends State<GuardsScreen> {
                 subtitle: Padding(
                   padding: const EdgeInsets.only(top: 4),
                   child: Wrap(spacing: 6, runSpacing: 4, children: [
-                    _Status(Icons.pin_outlined, g['pin_hash'] == null ? 'Chưa có PIN' : 'Có PIN', g['pin_hash'] != null),
+                    _Status(Icons.pin_outlined, g['has_pin'] == true ? 'Có PIN' : 'Chưa có PIN', g['has_pin'] == true),
                     _Status(Icons.fingerprint,
                         g['finger_id'] == null ? 'Chưa có vân tay' : 'Vân tay #${g['finger_id']}', g['finger_id'] != null),
-                    if (onDuty[g['id']] case final a?)
+                    if (g['on_duty_since'] case final String since)
                       _Status(Icons.badge_outlined,
-                          'Đang trực · ${a['shift_name'] ?? 'ngoài ca'} từ ${hm(DateTime.parse(a['time_in'] as String).toLocal())}', true),
+                          'Đang trực · ${g['on_duty_shift'] ?? 'ngoài ca'} từ ${hm(DateTime.parse(since).toLocal())}', true),
                   ]),
                 ),
                 onTap: () => _editGuard(g),

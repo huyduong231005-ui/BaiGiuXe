@@ -1,16 +1,18 @@
 import 'package:flutter/material.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../api.dart';
 import '../logic.dart';
 import '../main.dart';
-
-final _db = Supabase.instance.client;
 
 String _dur(int min) => '${min ~/ 60}h${(min % 60).toString().padLeft(2, '0')}';
 
 /// Bảng công theo tháng: tổng hợp từng bảo vệ + chi tiết từng lượt vào/ra ca.
+/// Quản lý dùng /attendance (mọi bảo vệ); tài khoản bảo vệ dùng /me/attendance (của mình), đặt trong trang chủ.
 class AttendanceScreen extends StatefulWidget {
-  const AttendanceScreen({super.key});
+  const AttendanceScreen({super.key, this.path = '/attendance', this.embedded = false});
+
+  final String path;
+  final bool embedded; // true: không có AppBar riêng
 
   @override
   State<AttendanceScreen> createState() => _AttendanceScreenState();
@@ -30,13 +32,9 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
   Future<void> _load() async {
     setState(() => loading = true);
     try {
-      final r = await _db
-          .from('attendance')
-          .select('*, guards(name)')
-          .gte('time_in', month.toUtc().toIso8601String())
-          .lt('time_in', DateTime(month.year, month.month + 1).toUtc().toIso8601String())
-          .order('time_in', ascending: false);
-      if (mounted) setState(() => rows = r);
+      final m = '${month.year}-${month.month.toString().padLeft(2, '0')}';
+      final r = await api.get(widget.path, {'month': m}) as Rec;
+      if (mounted) setState(() => rows = (r['records'] as List).cast<Rec>());
     } catch (e) {
       if (mounted) showError(context, e);
     } finally {
@@ -56,10 +54,10 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
     // Tổng hợp theo bảo vệ.
     final byGuard = <String, List<(Rec, AttStat)>>{};
     for (final r in rows) {
-      byGuard.putIfAbsent((r['guards'] as Rec?)?['name'] as String? ?? '#${r['guard_id']}', () => []).add((r, attStat(r)));
+      byGuard.putIfAbsent(r['guard_name'] as String? ?? '#${r['guard_id']}', () => []).add((r, attStat(r)));
     }
     return Scaffold(
-      appBar: AppBar(title: const Text('Bảng công')),
+      appBar: widget.embedded ? null : AppBar(title: const Text('Bảng công')),
       body: RefreshIndicator(
         onRefresh: _load,
         child: ListView(padding: const EdgeInsets.all(16), children: [
@@ -121,7 +119,7 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
     final s = Theme.of(context).colorScheme;
     final inT = DateTime.parse(r['time_in'] as String).toLocal();
     final outT = r['time_out'] == null ? null : DateTime.parse(r['time_out'] as String).toLocal();
-    final name = (r['guards'] as Rec?)?['name'] ?? '#${r['guard_id']}';
+    final name = r['guard_name'] ?? '#${r['guard_id']}';
     final out = st.open
         ? 'đang trực'
         : st.missingOut

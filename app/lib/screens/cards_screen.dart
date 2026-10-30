@@ -1,11 +1,13 @@
-import 'package:flutter/material.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
+import 'dart:async';
 
+import 'package:flutter/material.dart';
+
+import '../api.dart';
 import '../logic.dart';
 import '../main.dart';
 
-final _db = Supabase.instance.client;
 final _uidRe = RegExp(r'^[0-9A-F]{8,20}$');
+const _scanPollEvery = Duration(seconds: 2);
 
 class CardsScreen extends StatefulWidget {
   const CardsScreen({super.key});
@@ -26,8 +28,8 @@ class _CardsScreenState extends State<CardsScreen> {
 
   Future<void> _load() async {
     try {
-      final r = await _db.from('cards').select().order('created_at', ascending: false);
-      if (mounted) setState(() => cards = r);
+      final r = await api.get('/cards') as List;
+      if (mounted) setState(() => cards = r.cast<Rec>());
     } catch (e) {
       if (mounted) showError(context, e);
     }
@@ -57,11 +59,12 @@ class _CardsScreenState extends State<CardsScreen> {
     );
     if (ok != true) return;
     try {
-      await _db.from('cards').delete().eq('uid', c['uid']);
+      await api.delete('/cards/${c['uid']}');
       _load();
-    } catch (e) {
-      // Thẻ đã có lượt gửi thì FK chặn xoá: khoá thẻ thay vì xoá.
-      if (mounted) showError(context, 'Không xoá được (thẻ đã có lịch sử) - hãy mở thẻ và tắt "Đang hoạt động". $e');
+    } on ApiException catch (e) {
+      // Thẻ đã có lượt gửi thì FK chặn xoá (409): khoá thẻ thay vì xoá.
+      if (!mounted) return;
+      showError(context, e.status == 409 ? 'Không xoá được (thẻ đã có lịch sử) - hãy mở thẻ và tắt "Đang hoạt động".' : e);
     }
   }
 
@@ -185,7 +188,7 @@ class _CardFormState extends State<CardForm> {
   late final owner = TextEditingController(text: widget.card?['owner'] as String?);
   late String kind = widget.card?['kind'] as String? ?? 'guest';
   late bool active = widget.card?['active'] as bool? ?? true;
-  RealtimeChannel? listening;
+  Timer? listening;
   Rec? existing; // thẻ vừa quẹt đã có trong hệ thống
   String? error;
   bool saving = false;
@@ -198,42 +201,41 @@ class _CardFormState extends State<CardForm> {
     if (isNew) _waitScan();
   }
 
-  /// Chờ lần quẹt thẻ kế tiếp ở bất kỳ cổng nào để lấy UID.
+  /// Chờ lần quẹt thẻ kế tiếp ở bất kỳ cổng nào để lấy UID: hỏi API mỗi 2 giây thẻ nào vừa quẹt sau lúc bắt đầu chờ.
   /// ĐT camera ghi gate_events sau khi xử lý xong lượt quẹt (~2-3s), nên cần ĐT camera đang chạy.
   void _waitScan() {
+    final since = DateTime.now().toUtc().toIso8601String();
     setState(() {
       existing = null;
-      listening = _db
-          .channel('enroll')
-          .onPostgresChanges(
-            event: PostgresChangeEvent.insert,
-            schema: 'public',
-            table: 'gate_events',
-            filter: PostgresChangeFilter(type: PostgresChangeFilterType.eq, column: 'kind', value: 'scan'),
-            callback: (p) => _onScanned(p.newRecord['uid'] as String),
-          )
-          .subscribe();
+      listening = Timer.periodic(_scanPollEvery, (_) async {
+        try {
+          final scan = await api.get('/scans/latest', {'since': since});
+          if (scan != null && listening != null) _onScanned(scan as Rec);
+        } catch (_) {} // mất mạng một nhịp thì chờ nhịp sau
+      });
     });
   }
 
-  Future<void> _onScanned(String u) async {
+  Future<void> _onScanned(Rec scan) async {
     _stopScan();
+    final u = scan['uid'] as String;
     uid.text = u;
+    if (scan['registered'] != true) return;
     try {
-      final r = await _db.from('cards').select().eq('uid', u).maybeSingle();
-      if (mounted) setState(() => existing = r);
+      final r = (await api.get('/cards', {'q': u}) as List).cast<Rec>().where((c) => c['uid'] == u);
+      if (mounted) setState(() => existing = r.firstOrNull);
     } catch (_) {} // không kiểm tra được thì để lúc Lưu báo trùng
   }
 
   void _stopScan() {
     if (listening == null) return;
-    _db.removeChannel(listening!);
+    listening!.cancel();
     if (mounted) setState(() => listening = null);
   }
 
   @override
   void dispose() {
-    _stopScan();
+    listening?.cancel();
     super.dispose();
   }
 
@@ -254,10 +256,10 @@ class _CardFormState extends State<CardForm> {
       error = null;
     });
     try {
-      isNew ? await _db.from('cards').insert(row) : await _db.from('cards').update(row).eq('uid', widget.card!['uid']);
+      isNew ? await api.post('/cards', row) : await api.patch('/cards/${widget.card!['uid']}', row);
       if (mounted) Navigator.pop(context, true);
-    } on PostgrestException catch (e) {
-      setState(() => error = e.code == '23505' ? 'Thẻ $u đã có trong hệ thống' : e.message);
+    } on ApiException catch (e) {
+      setState(() => error = e.status == 409 ? 'Thẻ $u đã có trong hệ thống' : e.message);
     } finally {
       if (mounted) setState(() => saving = false);
     }

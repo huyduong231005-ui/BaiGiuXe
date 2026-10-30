@@ -1,10 +1,13 @@
-import 'package:flutter/material.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
+import 'dart:async';
 
+import 'package:flutter/material.dart';
+
+import '../api.dart';
 import '../logic.dart';
 import '../main.dart';
 
-final _db = Supabase.instance.client;
+/// Tài khoản API không có phiên Supabase nên không nghe Realtime được: tải lại định kỳ.
+const _refreshEvery = Duration(seconds: 5);
 
 String hhmm(String? iso) {
   if (iso == null) return '-';
@@ -23,41 +26,42 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Rec? status;
   List<Rec> parked = [];
   List<Rec> events = [];
-  late final RealtimeChannel ch;
+  Timer? timer;
+  bool loading = false;
 
   @override
   void initState() {
     super.initState();
     _reload();
-    // Có thay đổi ở sessions/gate_events thì tải lại; view parking_status không có realtime.
-    ch = _db
-        .channel('dashboard')
-        .onPostgresChanges(event: PostgresChangeEvent.all, schema: 'public', table: 'sessions', callback: (_) => _reload())
-        .onPostgresChanges(event: PostgresChangeEvent.all, schema: 'public', table: 'gate_events', callback: (_) => _reload())
-        .subscribe();
+    timer = Timer.periodic(_refreshEvery, (_) => _reload(quiet: true));
   }
 
   @override
   void dispose() {
-    _db.removeChannel(ch);
+    timer?.cancel();
     super.dispose();
   }
 
-  Future<void> _reload() async {
+  /// quiet: lần tải định kỳ lỗi (mất mạng) thì không hiện snackbar mỗi 5 giây.
+  Future<void> _reload({bool quiet = false}) async {
+    if (loading) return;
+    loading = true;
     try {
       final r = await Future.wait([
-        _db.from('parking_status').select().maybeSingle(),
-        _db.from('sessions').select().isFilter('time_out', null).order('time_in', ascending: false),
-        _db.from('gate_events').select().order('id', ascending: false).limit(20),
+        api.get('/status'),
+        api.get('/sessions', {'open': 'true'}),
+        api.get('/events', {'limit': '20'}),
       ]);
       if (!mounted) return;
       setState(() {
-        status = r[0] as Rec?;
-        parked = (r[1] as List).cast<Rec>();
+        status = r[0] as Rec;
+        parked = ((r[1] as Rec)['sessions'] as List).cast<Rec>();
         events = (r[2] as List).cast<Rec>();
       });
     } catch (e) {
-      if (mounted) showError(context, e);
+      if (mounted && !quiet) showError(context, e);
+    } finally {
+      loading = false;
     }
   }
 
@@ -74,17 +78,22 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
     if (ok != true) return;
     try {
-      await _db.from('gate_events').insert({'gate': 'out', 'kind': 'open_cmd'});
+      await api.post('/gate/open');
+      _reload();
     } catch (e) {
       if (mounted) showError(context, e);
     }
   }
 
-  /// Mất thẻ / xử lý tay: đóng lượt gửi, tính phí và mở cổng ra.
+  /// Mất thẻ / xử lý tay: đóng lượt gửi, tính phí và mở cổng ra (API làm cả 3 việc).
   Future<void> _release(Rec s) async {
-    final card = await _db.from('cards').select().eq('uid', s['card_uid']).maybeSingle();
-    final cfg = FeeConfig.fromRow(await _db.from('settings').select().single());
-    final fee = feeFor(s, card, DateTime.now(), cfg);
+    final int fee;
+    try {
+      fee = (await api.get('/sessions/${s['id']}/fee'))['fee'] as int;
+    } catch (e) {
+      if (mounted) showError(context, e);
+      return;
+    }
     if (!mounted) return;
     final ok = await showDialog<bool>(
       context: context,
@@ -103,12 +112,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
     if (ok != true) return;
     try {
-      await _db
-          .from('sessions')
-          .update({'time_out': DateTime.now().toUtc().toIso8601String(), 'fee': fee})
-          .eq('id', s['id'])
-          .isFilter('time_out', null);
-      await _db.from('gate_events').insert({'gate': 'out', 'kind': 'open_cmd', 'message': 'Cho ra thu cong'});
+      await api.post('/sessions/${s['id']}/release');
+      _reload();
     } catch (e) {
       if (mounted) showError(context, e);
     }

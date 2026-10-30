@@ -4,6 +4,9 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'api.dart';
+import 'google_auth.dart';
+import 'screens/attendance_screen.dart';
 import 'screens/camera_screen.dart';
 import 'screens/cards_screen.dart';
 import 'screens/dashboard_screen.dart';
@@ -27,6 +30,7 @@ Future<void> main() async {
   }
   await Supabase.initialize(url: supabaseUrl, publishableKey: supabaseKey);
   prefs = await SharedPreferences.getInstance();
+  api.restore(prefs);
   runApp(const App());
 }
 
@@ -72,15 +76,52 @@ class App extends StatelessWidget {
         title: 'Bãi giữ xe',
         theme: _theme(Brightness.light),
         darkTheme: _theme(Brightness.dark),
-        home: StreamBuilder<AuthState>(
-          stream: Supabase.instance.client.auth.onAuthStateChange,
-          builder: (_, _) =>
-              Supabase.instance.client.auth.currentSession == null ? const LoginScreen() : const RoleHome(),
+        // Tài khoản API (quản lý / bảo vệ) ưu tiên; không có thì phiên Supabase của ĐT camera.
+        home: ValueListenableBuilder<ApiUser?>(
+          valueListenable: api.session,
+          builder: (_, user, _) => user != null
+              ? (user.isStaff ? const ManagerHome() : GuardHome(user))
+              : StreamBuilder<AuthState>(
+                  stream: Supabase.instance.client.auth.onAuthStateChange,
+                  builder: (_, _) =>
+                      Supabase.instance.client.auth.currentSession == null ? const LoginScreen() : const RoleHome(),
+                ),
         ),
       );
 }
 
-/// Chọn vai trò một lần trên mỗi thiết bị: 'manager' | 'in' | 'out'.
+/// Đăng xuất cả tài khoản API lẫn phiên Supabase (thiết bị camera).
+Future<void> signOutAll() async {
+  await googleSignOut();
+  await api.logout();
+  if (Supabase.instance.client.auth.currentSession != null) await Supabase.instance.client.auth.signOut();
+}
+
+/// Tài khoản bảo vệ: xem chỗ trống và bảng công của mình.
+class GuardHome extends StatelessWidget {
+  const GuardHome(this.user, {super.key});
+
+  final ApiUser user;
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+        appBar: AppBar(
+          title: Text('Xin chào, ${user.displayName}'),
+          actions: [IconButton(onPressed: signOutAll, icon: const Icon(Icons.logout), tooltip: 'Đăng xuất')],
+        ),
+        body: user.guardId == null
+            ? const Center(
+                child: Padding(
+                  padding: EdgeInsets.all(24),
+                  child: Text('Tài khoản chưa được gắn với hồ sơ bảo vệ.\nNhờ quản trị viên gắn để xem bảng công.',
+                      textAlign: TextAlign.center),
+                ),
+              )
+            : const AttendanceScreen(path: '/me/attendance', embedded: true),
+      );
+}
+
+/// Chọn vai trò một lần trên mỗi thiết bị: 'manager' | 'in' | 'out' | 'both'.
 class RoleHome extends StatefulWidget {
   const RoleHome({super.key});
 
@@ -144,9 +185,9 @@ class _RoleCard extends StatelessWidget {
 }
 
 class ManagerHome extends StatefulWidget {
-  const ManagerHome({super.key, required this.onChangeRole, this.onShowCamera});
+  const ManagerHome({super.key, this.onChangeRole, this.onShowCamera});
 
-  final VoidCallback onChangeRole;
+  final VoidCallback? onChangeRole; // chỉ có trên thiết bị đăng nhập Supabase (chọn vai trò theo máy)
   final VoidCallback? onShowCamera; // có trên ĐT camera: thêm mục "Camera" ở thanh dưới
 
   @override
@@ -200,7 +241,7 @@ class PlateImage extends StatelessWidget {
   Widget build(BuildContext context) {
     if (path == null) return SizedBox(height: height, child: const Center(child: Text('Không có ảnh')));
     return FutureBuilder<String>(
-      future: Supabase.instance.client.storage.from('plates').createSignedUrl(path!, 3600),
+      future: api.get('/plates/url', {'path': path!}).then((r) => r['url'] as String),
       builder: (_, s) => s.hasData
           ? Image.network(s.data!, height: height, fit: BoxFit.contain)
           : SizedBox(height: height, child: Center(child: s.hasError ? Text('${s.error}') : const CircularProgressIndicator())),

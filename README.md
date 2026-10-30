@@ -4,16 +4,19 @@ ESP32 (2 đầu đọc RFID, barrier, OLED, bàn phím, vân tay) + 2 điện th
 
 ```
 ESP32 (WiFi bãi xe) --MQTT bgx/evt--> EMQX Cloud --> ĐT camera của cổng đó (WiFi hoặc 4G)
-ĐT camera: chụp -> Plate Recognizer -> quyết định -> MQTT bgx/cmd -> ESP32: còi / OLED / barrier
+ĐT camera: chụp -> REST API -> Plate Recognizer -> quyết định -> MQTT bgx/cmd -> ESP32: còi / OLED / barrier
 ĐT camera ghi sessions, gate_events, attendance, ảnh vào Supabase
-App quản lý: tổng quan, lịch sử + doanh thu, thẻ, bảo vệ + bảng công, cài đặt giá + ca trực
+App quản lý --HTTPS--> REST API (Render) --> Supabase: tổng quan, lịch sử + doanh thu, thẻ, bảo vệ + bảng công, cài đặt
 ```
+
+REST API đang chạy ở https://baigiuxe.onrender.com (danh sách API, số chỗ trống trực tiếp) · thử từng API: https://baigiuxe.onrender.com/docs
 
 | Thư mục | Nội dung |
 |---|---|
 | `supabase/migrations/` | `0001_init.sql` bảng, RLS, RPC, bucket ảnh, realtime · `0002_ble.sql` hàm kiểm tra bảo vệ · `0003_entry_constraints.sql` ràng buộc xe vào · `0004_attendance.sql` ca trực + chấm công |
 | `app/` | Flutter (Android / iOS / macOS). Một app, 3 vai trò: Quản lý, Camera cổng vào, Camera cổng ra (hoặc 1 ĐT cho cả 2 cổng) |
 | `firmware/` | PlatformIO cho ESP32 DevKit V1 (`src/main.cpp` firmware chính, `src/hwtest.cpp` thử phần cứng) |
+| `backend/` | REST API Node.js + Express, dữ liệu trên Supabase Postgres, deploy Render (`render.yaml`). `0005_api_users.sql` thêm tài khoản API + OTP |
 
 ## 1. Supabase
 
@@ -33,6 +36,19 @@ ESP32 không cần tài khoản Supabase: nó chỉ nói chuyện với ĐT qua 
 
 Đăng ký tại platerecognizer.com (gói free 2.500 lượt/tháng) và lấy API token.
 
+## 2b. REST API (Render)
+
+```bash
+cd backend
+npm test                 # 25 test chạy trên Postgres trong bộ nhớ (PGlite) với đúng các migration
+cp .env.example .env     # điền DATABASE_URL (Session pooler), SUPABASE_SERVICE_KEY, PLATE_TOKEN...
+npm run dev
+```
+
+Deploy: Render → New Web Service → repo này, Root Directory `backend`, Build `npm ci --omit=dev`, Start `npm start`,
+nhập các biến trong `render.yaml`. `DATABASE_URL` phải là chuỗi **Session pooler** (Render không ra được IPv6 của
+kết nối trực tiếp). Tài khoản đăng ký qua app là bảo vệ; cấp quyền admin: `npm run make-admin -- <tên đăng nhập>`.
+
 ## 3. EMQX Cloud (MQTT)
 
 ESP32 và 2 ĐT camera nói chuyện qua broker MQTT, nên ĐT dùng WiFi hay 4G đều được, không cần đứng gần ESP32.
@@ -48,11 +64,13 @@ ESP32 và 2 ĐT camera nói chuyện qua broker MQTT, nên ĐT dùng WiFi hay 4G
 ```bash
 cd app
 flutter test
-# Sửa app/dart_defines.json: SUPABASE_URL, SUPABASE_KEY, PLATE_TOKEN, MQTT_HOST, MQTT_USER, MQTT_PASS
+# Sửa app/dart_defines.json: SUPABASE_URL, SUPABASE_KEY, MQTT_HOST, MQTT_USER, MQTT_PASS (API_URL mặc định baigiuxe.onrender.com)
 flutter build apk --release --dart-define-from-file=dart_defines.json
 ```
 
-Lần mở đầu tiên trên mỗi thiết bị, đăng nhập rồi chọn vai trò:
+Màn đăng nhập có 2 kiểu:
+- **Tài khoản** (quản lý / bảo vệ): tên đăng nhập + mật khẩu → mã OTP gửi email, hoặc Google, hoặc đăng ký mới. Mọi màn quản lý gọi REST API. Tài khoản bảo vệ chỉ xem bảng công của mình.
+- **Thiết bị camera**: tài khoản nhân viên Supabase như trước, rồi chọn vai trò:
 - **Camera cổng vào / ra** (Android, iOS): gắn điện thoại nhìn thẳng biển số, cắm sạc. Màn hình luôn sáng. Màn camera ở lại liên tục để quét xe xếp hàng, hiện 4 xe gần nhất.
 - **Quản lý** (mọi nền tảng, kể cả macOS).
 
@@ -109,6 +127,5 @@ pio run -t upload && pio device monitor
 
 ## Chưa làm (có chủ đích)
 - Hàng đợi offline khi mất internet (vân tay đã đăng ký và nút khẩn cấp vẫn mở cổng được).
-- Giấu `PLATE_TOKEN` sau Edge Function: hiện token nằm trong file build của app.
 - Tự xoá ảnh cũ trong bucket `plates`.
 - Sửa / xoá tay một lượt chấm công trong bảng công (hiện chỉ sửa được bằng SQL).

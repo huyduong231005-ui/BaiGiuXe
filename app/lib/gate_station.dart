@@ -1,16 +1,13 @@
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:camera/camera.dart';
 import 'package:flutter/foundation.dart';
-import 'package:http/http.dart' as http;
 import 'package:image/image.dart' as img;
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'api.dart';
 import 'esp_link.dart';
 import 'logic.dart';
-
-const plateToken = String.fromEnvironment('PLATE_TOKEN');
 
 /// Một lần đọc biển: biển tốt nhất, độ tin cậy, và các phương án đọc khác (OCR hay nhầm 1 ký tự).
 typedef PlateRead = ({String plate, double score, List<String> candidates});
@@ -19,24 +16,18 @@ typedef PlateRead = ({String plate, double score, List<String> candidates});
 /// Đo thực tế: 1280px (148KB) đọc đúng, tin cậy 0,997, ~1,7s; ảnh gốc 1080x1920 (~1MB) ~2,5s.
 const ocrMaxSide = 1280;
 
-/// Gửi ảnh lên Plate Recognizer. Ảnh có nhiều xe -> lấy biển có độ tin cậy cao nhất. null = không thấy biển.
+/// Gửi ảnh qua REST API (máy chủ giữ token Plate Recognizer, gọi tiếp với regions=vn, strict).
+/// Ảnh có nhiều xe -> API lấy biển có độ tin cậy cao nhất. null = không thấy biển.
+/// Chờ tối đa 10s: ESP32 chỉ đợi kết quả 12s; API đang ngủ thì lượt này lỗi, CameraScreen ping để giữ API thức.
 Future<PlateRead?> recognize(Uint8List jpg) async {
-  // ponytail: token nằm trong file build; chuyển sang Edge Function proxy nếu phát hành app ra ngoài.
-  final req = http.MultipartRequest('POST', Uri.parse('https://api.platerecognizer.com/v1/plate-reader/'))
-    ..headers['Authorization'] = 'Token $plateToken'
-    ..fields['regions'] = 'vn'
-    ..fields['config'] = '{"region":"strict"}' // chỉ nhận kết quả đúng mẫu biển Việt Nam
-    ..files.add(http.MultipartFile.fromBytes('upload', jpg, filename: 'shot.jpg'));
-  final res = await http.Response.fromStream(await req.send().timeout(const Duration(seconds: 8)));
-  if (res.statusCode != 200 && res.statusCode != 201) {
-    throw Exception('PlateRecognizer ${res.statusCode}: ${res.body}');
-  }
-  final results = (jsonDecode(res.body)['results'] as List).cast<Rec>();
-  if (results.isEmpty) return null;
-  final best = results.reduce((a, b) => (a['score'] as num) >= (b['score'] as num) ? a : b);
-  final plate = normPlate(best['plate'] as String);
-  final cands = [for (final c in (best['candidates'] as List? ?? const [])) normPlate((c as Rec)['plate'] as String)];
-  return (plate: plate, score: (best['score'] as num).toDouble(), candidates: cands.isEmpty ? [plate] : cands);
+  final r = await api.postJpeg('/plates/recognize', jpg, timeout: const Duration(seconds: 10)) as Rec;
+  final plate = r['plate'] as String?;
+  if (plate == null || plate.isEmpty) return null;
+  return (
+    plate: plate,
+    score: (r['score'] as num).toDouble(),
+    candidates: (r['candidates'] as List).cast<String>(),
+  );
 }
 
 Uint8List shrinkForOcr(Uint8List jpg) {

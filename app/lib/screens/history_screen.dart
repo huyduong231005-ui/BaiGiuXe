@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../api.dart';
 import '../logic.dart';
 import '../main.dart';
 import 'dashboard_screen.dart' show hhmm;
 
-final _db = Supabase.instance.client;
+String _ymd(DateTime d) => '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
 
 class HistoryScreen extends StatefulWidget {
   const HistoryScreen({super.key});
@@ -18,6 +18,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
   DateTime day = DateUtils.dateOnly(DateTime.now());
   final plate = TextEditingController();
   List<Rec> rows = [];
+  int total = 0;
 
   @override
   void initState() {
@@ -27,15 +28,13 @@ class _HistoryScreenState extends State<HistoryScreen> {
 
   Future<void> _load() async {
     try {
-      var q = _db
-          .from('sessions')
-          .select()
-          .gte('time_in', day.toUtc().toIso8601String())
-          .lt('time_in', day.add(const Duration(days: 1)).toUtc().toIso8601String());
-      final p = normPlate(plate.text);
-      if (p.isNotEmpty) q = q.or('plate_in.ilike.%$p%,plate_out.ilike.%$p%');
-      final r = await q.order('time_in', ascending: false).limit(1000);
-      if (mounted) setState(() => rows = r);
+      final r = await api.get('/sessions', {'date': _ymd(day), 'plate': normPlate(plate.text)}) as Rec;
+      if (mounted) {
+        setState(() {
+          rows = (r['sessions'] as List).cast<Rec>();
+          total = r['revenue'] as int;
+        });
+      }
     } catch (e) {
       if (mounted) showError(context, e);
     }
@@ -59,7 +58,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
               const Text('Lúc ra'),
               PlateImage(s['img_out'] as String?),
               Text('Thẻ ${s['card_uid']} · phí ${s['fee'] ?? '-'} đ'
-                  '${s['override_by'] != null ? ' · bảo vệ #${s['override_by']} mở tay' : ''}'),
+                  '${s['override_by'] != null ? ' · bảo vệ ${s['override_name'] ?? '#${s['override_by']}'} mở tay' : ''}'),
             ]),
           ),
         ),
@@ -67,7 +66,6 @@ class _HistoryScreenState extends State<HistoryScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final total = rows.fold<int>(0, (a, s) => a + ((s['fee'] as int?) ?? 0));
     return Column(children: [
       Padding(
         padding: const EdgeInsets.all(8),
