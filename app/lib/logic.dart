@@ -1,5 +1,5 @@
 // Logic thuần (không I/O) dùng trên giao diện: chuẩn hoá biển số, hạn vé tháng, thống kê chấm công.
-// Quyết định cho xe vào / ra, tính phí, chấm công ở cổng nằm trên API (backend/src/rules.js).
+// Quyết định cho xe vào / ra, tính phí, chấm công ở cổng nằm trên API (backend/lib/src/rules.dart).
 
 typedef Rec = Map<String, dynamic>;
 

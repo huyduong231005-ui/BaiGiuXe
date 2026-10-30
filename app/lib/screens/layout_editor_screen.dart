@@ -5,7 +5,7 @@ import '../logic.dart';
 import '../lot.dart';
 import '../main.dart';
 
-/// Mặt bằng mẫu cho bãi chung cư (trùng SAMPLE_LAYOUT ở backend/src/layout.js): lối vào / ra ở tường trên,
+/// Mặt bằng mẫu cho bãi chung cư (trùng sampleLayout ở backend/lib/src/layout.dart): lối vào / ra ở tường trên,
 /// 3 làn đường, khu A, B xe máy, C ô tô, D xe đạp.
 const sampleLayout = [
   '##I################O##',

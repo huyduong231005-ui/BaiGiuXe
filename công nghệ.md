@@ -11,7 +11,7 @@ Tài liệu liệt kê toàn bộ phần cứng, thư viện, dịch vụ và c�
                   bgx/phone/<cổng>                                         |
                                                                            | HTTPS
                      Plate Recognizer API  <--  REST API (Render)  <-------+
-                                                  Node.js + Express
+                                                  Dart (shelf)
                                                         |
                                                   MongoDB Atlas (CSDL + ảnh)
                                                         ^
@@ -109,15 +109,15 @@ Giao diện dùng Material 3 (sáng/tối theo hệ thống). Các màn chính: 
 
 | Thành phần | Dùng để |
 |---|---|
-| Node.js 22+, Express 5 | REST API (`backend/`), deploy Render gói free (Singapore) |
-| Mongoose 9 + MongoDB Atlas M0 | Các collection `app_users`, `otps`, `settings`, `cards`, `guards`, `sessions`, `gate_events`, `shift_defs`, `attendance`, `ticket_requests`, `plate_images`. Id số tự tăng (collection `counters`) |
+| Dart 3.13, shelf | REST API (`backend/`), biên dịch thành 1 file chạy trong Docker, deploy Render gói free (Singapore) |
+| mongo_dart + MongoDB Atlas M0 | Các collection `app_users`, `otps`, `settings`, `cards`, `guards`, `sessions`, `gate_events`, `shift_defs`, `attendance`, `ticket_requests`, `plate_images`. Id số tự tăng (collection `counters`) |
 | Index unique có điều kiện | Mỗi thẻ / mỗi biển chỉ có 1 lượt đang gửi, mỗi bảo vệ chỉ có 1 ca đang mở |
-| jsonwebtoken, bcryptjs | JWT 7 ngày, băm mật khẩu và PIN bảo vệ |
+| JWT HS256 (tự viết trên package crypto), bcrypt | JWT 7 ngày, băm mật khẩu và PIN bảo vệ (đọc được token / hash cũ của bản Node) |
 | Brevo HTTP API | Gửi mã OTP qua email (Render free chặn cổng SMTP) |
-| google-auth-library | Xác thực idToken đăng nhập Google |
-| exceljs | Báo cáo tháng Excel |
+| Google tokeninfo | Xác thực idToken đăng nhập Google |
+| excel | Báo cáo tháng Excel |
 | Swagger UI (`/docs`) | Thử từng API |
-| node:test + mongodb-memory-server | 41 test chạy trên MongoDB trong bộ nhớ |
+| package:test | 50 test chạy trên MongoDB thật (mỗi file một database tạm) |
 
 ### EMQX Cloud Serverless (MQTT broker)
 

@@ -1,13 +1,13 @@
-# Render Blueprint cho REST API (thư mục backend/). Dữ liệu nằm ở MongoDB Atlas, các khoá bí mật nhập trên Render.
+# Render Blueprint cho REST API Dart (thư mục backend/). Dữ liệu nằm ở MongoDB Atlas, các khoá bí mật nhập trên Render.
 services:
   - type: web
     name: bai-giu-xe-api
-    runtime: node
+    runtime: docker # API viết bằng Dart: Render không có runtime Dart sẵn nên build bằng backend/Dockerfile
     plan: free
     region: singapore
     rootDir: backend
-    buildCommand: npm ci --omit=dev
-    startCommand: npm start
+    dockerfilePath: ./backend/Dockerfile # tính từ gốc repo
+    dockerContext: ./backend
     healthCheckPath: /health
     envVars:
       - key: TZ

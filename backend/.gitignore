@@ -1,2 +1,4 @@
-node_modules/
+.dart_tool/
 .env
+bin/server
+*.exe
