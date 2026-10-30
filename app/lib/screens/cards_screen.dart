@@ -371,7 +371,10 @@ class _CardFormState extends State<CardForm> {
           enabled: isNew,
           textCapitalization: TextCapitalization.characters,
           decoration: const InputDecoration(labelText: 'UID thẻ', prefixIcon: Icon(Icons.nfc), helperText: 'Tự điền khi quẹt thẻ, hoặc nhập tay'),
-          onChanged: (_) => setState(() {}),
+          // Sửa tay sang UID khác thì thôi báo "Thẻ này đã có" của thẻ vừa quẹt.
+          onChanged: (v) => setState(() {
+            if (existing != null && existing!['uid'] != v.trim().toUpperCase()) existing = null;
+          }),
         ),
         const SizedBox(height: 20),
         Text('Loại vé', style: t.titleSmall),

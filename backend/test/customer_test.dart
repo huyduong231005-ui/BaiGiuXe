@@ -16,7 +16,10 @@ void main() {
   tearDownAll(() => ctx.close());
 
   test('khách gửi đơn vé tháng -> sửa -> quản lý duyệt, gán thẻ -> thẻ hiện trong app khách', () async {
-    final bad = await ctx.call('POST', '/me/requests', token: khach, body: {'plate': '59', 'ownerName': 'An', 'months': 1, 'apartment': 'A1-12.05'});
+    // Form đăng ký vé tháng / sơ đồ của khách cần bảng giá loại xe; thêm loại xe vẫn chỉ quản lý.
+    expect((await ctx.call('GET', '/vehicle-types', token: khach)).body, isNotEmpty);
+    expect((await ctx.call('POST', '/vehicle-types', token: khach, body: {'code': 'ebike'})).status, 403);
+    final bad =await ctx.call('POST', '/me/requests', token: khach, body: {'plate': '59', 'ownerName': 'An', 'months': 1, 'apartment': 'A1-12.05'});
     expect(bad.status, 400);
     final r0 = await ctx.call('POST', '/me/requests', token: khach, body: {'plate': '59x1-123.45', 'ownerName': 'An', 'months': 1});
     expect(r0.status, 400); // thiếu căn hộ

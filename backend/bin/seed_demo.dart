@@ -125,6 +125,8 @@ Future<void> main(List<String> args) async {
   for (final (card, plate, vt, slot, daysAgo, inH, outH, fee) in closed) {
     final timeIn = _startOfDay(daysAgo).add(Duration(hours: inH));
     final timeOut = _startOfDay(daysAgo).add(Duration(hours: outH));
+    // Seed lúc sáng sớm thì lượt "hôm nay 7h-9h" còn ở tương lai: bỏ, không thì sinh lượt quẹt / doanh thu chưa xảy ra.
+    if (timeOut.isAfter(DateTime.now())) continue;
     await Session.insert({'card_uid': card, 'plate_in': plate, 'plate_out': plate, 'time_in': timeIn,
       'time_out': timeOut, 'fee': fee, 'vehicle_type': vt, 'slot_code': slot, 'parked': false});
     await GateEvent.insert({'gate': 'in', 'kind': 'scan', 'uid': card, 'status': 'ok', 'plate': plate,

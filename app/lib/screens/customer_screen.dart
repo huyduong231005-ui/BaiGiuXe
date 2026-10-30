@@ -75,7 +75,8 @@ void showMySlot(BuildContext context, String slot) => Navigator.push(
                         route: cellsFrom(r['path']), exitRoute: cellsFrom(r['exitPath']), highlight: slot),
                   ),
                 ),
-                const Padding(padding: EdgeInsets.fromLTRB(8, 0, 8, 8), child: LotLegend(withRoute: true)),
+                // SafeArea: không để thanh điều hướng của Android đè lên chú thích
+                const SafeArea(top: false, child: Padding(padding: EdgeInsets.fromLTRB(8, 0, 8, 8), child: LotLegend(withRoute: true))),
               ]);
             },
           ),
@@ -712,9 +713,21 @@ class _LotInfoState extends State<_LotInfo> {
               child: SizedBox(
                 height: 220,
                 child: FlutterMap(
-                  options: MapOptions(initialCenter: LatLng(lat.toDouble(), lng.toDouble()), initialZoom: 16),
+                  options: MapOptions(
+                    initialCenter: LatLng(lat.toDouble(), lng.toDouble()),
+                    initialZoom: 16,
+                    // Không kéo bản đồ bằng 1 ngón: vuốt trên bản đồ vẫn cuộn được trang xuống phần Tài khoản.
+                    interactionOptions: const InteractionOptions(flags: InteractiveFlag.pinchZoom | InteractiveFlag.doubleTapZoom),
+                  ),
                   children: [
-                    TileLayer(urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png', userAgentPackageName: 'vn.baigiuxe.bai_giu_xe'),
+                    // Ô bản đồ của OpenStreetMap France: một số mạng ở VN chặn DNS tile.openstreetmap.org (trả về
+                    // 127.0.0.1) làm bản đồ trắng; CARTO thì giờ đòi API key (trả ảnh báo lỗi thay cho bản đồ).
+                    TileLayer(
+                      urlTemplate: 'https://{s}.tile.openstreetmap.fr/osmfr/{z}/{x}/{y}.png',
+                      subdomains: const ['a', 'b', 'c'],
+                      userAgentPackageName: 'vn.baigiuxe.bai_giu_xe',
+                    ),
+                    const SimpleAttributionWidget(source: Text('OpenStreetMap France')),
                     MarkerLayer(markers: [
                       Marker(point: LatLng(lat.toDouble(), lng.toDouble()), width: 44, height: 44,
                           child: Icon(Icons.location_on, size: 44, color: s.error)),

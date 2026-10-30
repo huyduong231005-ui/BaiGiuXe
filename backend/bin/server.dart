@@ -11,7 +11,11 @@ const _required = ['MONGODB_URI', 'JWT_SECRET', 'PLATE_TOKEN', 'GOOGLE_CLIENT_ID
 
 Future<void> main() async {
   final env = loadEnv();
-  final missing = _required.where((k) => (env[k] ?? '').isEmpty).toList();
+  // MAIL_CONSOLE=1 (chỉ dùng khi chạy thử trên máy / máy ảo): in mã OTP ra terminal thay vì gửi email.
+  final console = env['MAIL_CONSOLE'] == '1';
+  final missing = _required
+      .where((k) => !(console && (k == 'BREVO_API_KEY' || k == 'MAIL_FROM')) && (env[k] ?? '').isEmpty)
+      .toList();
   if (missing.isNotEmpty) throw StateError('Thiếu biến môi trường: ${missing.join(', ')}');
 
   await connect(env['MONGODB_URI']!);
@@ -19,7 +23,9 @@ Future<void> main() async {
   final app = createApp(Deps(
     jwtSecret: env['JWT_SECRET']!,
     plateToken: env['PLATE_TOKEN']!,
-    sendMail: brevoMailer(apiKey: env['BREVO_API_KEY']!, from: env['MAIL_FROM']!),
+    sendMail: console
+        ? (to, code, purpose) async => print('[OTP] $purpose $to: $code')
+        : brevoMailer(apiKey: env['BREVO_API_KEY']!, from: env['MAIL_FROM']!),
     verifyGoogle: googleVerifier(env['GOOGLE_CLIENT_ID']!),
   ));
   final port = int.parse(env['PORT'] ?? '3000');

@@ -203,9 +203,7 @@ void lotRoutes(Router router) {
     return json(await lotMap());
   });
 
-  // ---- Loại xe + bảng giá ----
-  router.get('/vehicle-types', (_) async => json((await vehicleTypes()).values.toList()));
-
+  // ---- Loại xe + bảng giá (GET mở cho mọi tài khoản, ở app.dart) ----
   router.post('/vehicle-types', (req) async {
     final code = str(req.b('code')).toLowerCase();
     if (!_codeRe.hasMatch(code)) throw HttpError(400, 'Mã loại xe 2-20 ký tự: chữ thường, số, _ (VD: ebike)');

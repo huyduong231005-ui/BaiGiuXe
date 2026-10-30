@@ -247,8 +247,9 @@ class LotPainter extends CustomPainter {
     for (final e in bounds.entries) {
       final b = e.value;
       // Khu hẹp (1-2 cột, hay gặp khi mặt bằng bị xoay) chỉ ghi chữ cái, căn giữa trên khu: không tràn sang ô cổng bên cạnh.
+      // Nền tối sau chữ: tên khu nằm trên làn đường, không lẫn vào mũi tên / đường chỉ dẫn.
       _text(canvas, b.width >= cell * 2.5 ? 'Khu ${e.key}' : e.key, Offset(b.center.dx, b.top - cell * 0.32), cell * 0.5,
-          Colors.white.withValues(alpha: 0.9), bold: true);
+          Colors.white.withValues(alpha: 0.9), bold: true, bg: wall.withValues(alpha: 0.85));
     }
     // Cổng
     for (final (ch, label) in [('I', 'VÀO'), ('O', 'RA')]) {
@@ -315,12 +316,18 @@ class LotPainter extends CustomPainter {
     canvas.drawPath(head, Paint()..color = color);
   }
 
-  void _text(Canvas canvas, String s, Offset at, double size, Color color, {bool bold = false, bool alignLeft = false}) {
+  void _text(Canvas canvas, String s, Offset at, double size, Color color,
+      {bool bold = false, bool alignLeft = false, Color? bg}) {
     final tp = TextPainter(
       text: TextSpan(text: s, style: TextStyle(color: color, fontSize: size, fontWeight: bold ? FontWeight.bold : null)),
       textDirection: TextDirection.ltr,
     )..layout();
-    tp.paint(canvas, alignLeft ? at - Offset(0, tp.height / 2) : at - Offset(tp.width / 2, tp.height / 2));
+    final topLeft = alignLeft ? at - Offset(0, tp.height / 2) : at - Offset(tp.width / 2, tp.height / 2);
+    if (bg != null) {
+      final box = (topLeft & tp.size).inflate(size * 0.2);
+      canvas.drawRRect(RRect.fromRectAndRadius(box, Radius.circular(size * 0.3)), Paint()..color = bg);
+    }
+    tp.paint(canvas, topLeft);
   }
 
   @override

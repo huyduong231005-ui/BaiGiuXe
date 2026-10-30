@@ -66,7 +66,9 @@ Future<Response> Function(Request) createApp(Deps deps) {
     ..get('/me/attendance', (req) async => json(await meAttendance(req)))
     // Sơ đồ bãi không kèm biển số / chủ xe: cư dân xem ô của mình, khách xem chỗ trống.
     ..get('/lot/map/public', (_) async => json(await lotMap(withPlates: false)))
-    ..get('/lot/route', (req) async => json(await routeOf(req)));
+    ..get('/lot/route', (req) async => json(await routeOf(req)))
+    // Bảng giá loại xe: khách cần để xem sơ đồ và đăng ký vé tháng (thêm / sửa / xoá vẫn chỉ quản lý).
+    ..get('/vehicle-types', (_) async => json((await vehicleTypes()).values.toList()));
 
   final admin = Router(prefix: '/admin', guard: auth(['admin']));
   adminRoutes(admin);
