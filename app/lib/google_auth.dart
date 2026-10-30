@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 
 import 'api.dart';
@@ -17,8 +18,16 @@ Future<String?> googleIdToken() async {
   try {
     account = await GoogleSignIn.instance.authenticate();
   } on GoogleSignInException catch (e) {
-    if (e.code == GoogleSignInExceptionCode.canceled) return null;
-    throw ApiException('Đăng nhập Google lỗi: ${e.description ?? e.code.name}');
+    debugPrint('[google] ${e.code.name}: ${e.description}');
+    // Cấu hình OAuth client Android sai (package / SHA-1) cũng trả về "canceled" kèm mô tả [16] / reauth:
+    // phải báo ra, nếu không người dùng bấm nút mà không thấy gì xảy ra.
+    final desc = e.description ?? '';
+    if (e.code == GoogleSignInExceptionCode.canceled && !RegExp(r'\[1[06]\]|reauth', caseSensitive: false).hasMatch(desc)) {
+      return null; // người dùng tự đóng bảng chọn tài khoản
+    }
+    throw ApiException(desc.contains('[16]') || desc.contains('[10]')
+        ? 'Google từ chối ứng dụng này: kiểm tra OAuth client Android (package + SHA-1) trên Google Cloud. ($desc)'
+        : 'Đăng nhập Google lỗi: ${desc.isEmpty ? e.code.name : desc}');
   }
   final idToken = account.authentication.idToken;
   if (idToken == null) throw ApiException('Google không trả về idToken');

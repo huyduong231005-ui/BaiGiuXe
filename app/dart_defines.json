@@ -1,6 +1,4 @@
 {
-  "SUPABASE_URL": "https://rkdyozqpwfszvcaljcnh.supabase.co",
-  "SUPABASE_KEY": "sb_publishable_ZWLMzzBM4V_p7GmZeHdTFQ_FUEnFf9X",
   "MQTT_HOST": "mff02fa7.ala.eu-central-1.emqxsl.com",
   "MQTT_USER": "phone",
   "MQTT_PASS": "huy2310"

@@ -7,7 +7,7 @@ import '../logic.dart';
 import '../main.dart';
 import 'lookup_screen.dart';
 
-/// Tài khoản API không có phiên Supabase nên không nghe Realtime được: tải lại định kỳ.
+/// Tải lại định kỳ từ API để thấy xe vào / ra mới.
 const _refreshEvery = Duration(seconds: 5);
 
 String hhmm(String? iso) {

@@ -3,72 +3,80 @@ import assert from 'node:assert/strict';
 import { ago, loginAs, startApp } from './helpers.js';
 
 let ctx, token, guardId;
+const IMG = 'in/2026-10-30/1761800000000_A1B2C3D4.jpg';
 before(async () => {
   ctx = await startApp();
   token = await loginAs(ctx, 'manager', 'camera');
   await ctx.call('POST', '/cards', { token, body: { uid: 'A1B2C3D4' } });
+  await ctx.call('POST', '/cards', { token, body: { uid: 'B1B2C3D4', kind: 'monthly', plate: '30A99999' } });
   guardId = (await ctx.call('POST', '/guards', { token, body: { name: 'Nguyễn Văn Tuấn', pin: '2468' } })).body.id;
 });
 after(() => ctx.close());
 
-test('xe vào rồi ra: context đủ dữ liệu để quyết định, không vào 2 lần, đóng lượt 1 lần', async () => {
-  const c0 = (await ctx.call('GET', '/gate/context?uid=a1b2c3d4', { token })).body;
-  assert.deepEqual([c0.card.uid, c0.open, c0.status.free, c0.settings.price_day, c0.parked], ['A1B2C3D4', null, 50, 3000, []]);
+const scan = (body) => ctx.call('POST', '/gate/scan', { token, body });
 
-  assert.equal((await ctx.call('POST', '/gate/sessions', { token, body: { card_uid: 'A1B2C3D4' } })).status, 400); // thiếu biển
-  assert.equal((await ctx.call('POST', '/gate/sessions', { token, body: { card_uid: 'FFFFFFFF', plate_in: '59X112345' } })).status, 400);
-  const s = await ctx.call('POST', '/gate/sessions', { token, body: { card_uid: 'A1B2C3D4', plate_in: '59x1-123.45', img_in: 'in/2026-10-30/1_A1B2C3D4.jpg' } });
-  assert.deepEqual([s.status, s.body.plate_in, s.body.time_out], [201, '59X112345', null]);
-  assert.equal((await ctx.call('POST', '/gate/sessions', { token, body: { card_uid: 'A1B2C3D4', plate_in: '30A99999' } })).status, 409);
+test('quẹt thẻ: API kiểm tra, mở / đóng lượt gửi, ghi nhật ký, trả 2 dòng OLED và chỗ trống', async () => {
+  assert.equal((await scan({ gate: 'x', uid: 'A1B2C3D4' })).status, 400);
+  assert.equal((await scan({ gate: 'in', uid: 'FFFFFFFF', plate: '59X112345', score: 0.9 })).body.message, 'The chua dang ky');
+  assert.equal((await scan({ gate: 'in', uid: 'A1B2C3D4', plate: null })).body.message, 'Khong doc duoc bien');
+  assert.equal((await scan({ gate: 'in', uid: 'A1B2C3D4', plate: '59X112345', score: 0.5 })).body.message, 'Bien mo, quet lai');
+  assert.equal((await scan({ gate: 'in', uid: 'B1B2C3D4', plate: '59X112345', score: 0.9 })).body.message, 'Sai xe ve thang');
 
-  const c1 = (await ctx.call('GET', '/gate/context?uid=A1B2C3D4', { token })).body;
-  assert.deepEqual([c1.open.id, c1.status.free, c1.parked], [s.body.id, 49, ['59X112345']]);
+  const vao = (await scan({ gate: 'in', uid: 'a1b2c3d4', plate: '59x1-123.45', score: 0.95, img: IMG })).body;
+  assert.deepEqual([vao.ok, vao.l1, vao.l2, vao.status.free], [true, '59X112345', 'Moi vao', 49]);
+  assert.equal((await scan({ gate: 'in', uid: 'A1B2C3D4', plate: '59X112345', score: 0.95 })).body.message, 'The dang gui xe');
+  // Biển đã trong bãi thì thẻ khác cũng không đưa vào được
+  assert.equal((await scan({ gate: 'in', uid: 'B1B2C3D4', plate: '59X112345', score: 0.95 })).body.message, 'Xe da o trong bai');
 
-  const out = await ctx.call('POST', `/gate/sessions/${s.body.id}/close`, { token, body: { plate_out: '59X112345', fee: 3000 } });
-  assert.deepEqual([out.status, out.body.fee, Boolean(out.body.time_out)], [200, 3000, true]);
-  assert.equal((await ctx.call('POST', `/gate/sessions/${s.body.id}/close`, { token, body: { fee: 3000 } })).status, 409);
-  assert.equal((await ctx.call('GET', '/status')).body.free, 50);
+  assert.equal((await scan({ gate: 'out', uid: 'A1B2C3D4', plate: '30A11111' })).body.message, 'Sai bien so');
+  const ra = (await scan({ gate: 'out', uid: 'A1B2C3D4', plate: '59X112346', candidates: ['59X112345'] })).body;
+  assert.deepEqual([ra.ok, ra.open, ra.fee, ra.l2, ra.status.free], [true, true, 3000, 'Phi: 3000d', 50]);
+  assert.equal((await scan({ gate: 'out', uid: 'A1B2C3D4', plate: '59X112345' })).body.message, 'Khong co luot gui');
+
+  const s = (await ctx.call('GET', '/sessions?plate=59X112345', { token })).body.sessions[0];
+  assert.deepEqual([s.img_in, s.fee, s.plate_out], [IMG, 3000, '59X112346']);
+  const [last] = (await ctx.call('GET', '/events?limit=1', { token })).body;
+  assert.deepEqual([last.kind, last.status, last.uid], ['scan', 'denied', 'A1B2C3D4']);
 });
 
-test('bảo vệ mở tay: tìm theo PIN / vân tay, đóng lượt của thẻ bị từ chối kèm tên bảo vệ', async () => {
-  assert.equal((await ctx.call('POST', '/gate/guards/find', { token, body: { pin: '0000' } })).body, null);
-  assert.deepEqual((await ctx.call('POST', '/gate/guards/find', { token, body: { pin: '2468' } })).body, { id: guardId, name: 'Nguyễn Văn Tuấn' });
-  const f = await ctx.call('POST', `/gate/guards/${guardId}/finger`, { token });
-  assert.deepEqual([f.body.finger_id, f.body.pin_hash], [guardId, undefined]);
-  assert.equal((await ctx.call('POST', '/gate/guards/find', { token, body: { finger: guardId } })).body.id, guardId);
+test('bảo vệ mở tay: sai PIN bị từ chối, đúng PIN đóng lượt bị từ chối gần đây kèm tên bảo vệ', async () => {
+  assert.deepEqual((await ctx.call('POST', '/gate/auth', { token, body: { pin: '0000' } })).body.ok, false);
+  const enroll = (await ctx.call('POST', '/gate/auth', { token, body: { pin: '2468', enroll: true } })).body;
+  assert.deepEqual([enroll.ok, enroll.guardId], [true, guardId]);
 
   await ctx.db.insert(ctx.db.Session, { card_uid: 'A1B2C3D4', plate_in: '59X112345', time_in: ago(1) });
-  const r = await ctx.call('POST', '/gate/release-card', { token, body: { uid: 'A1B2C3D4', plate: '59X112345', guardId } });
-  assert.deepEqual([r.body.fee, r.body.session.override_by], [3000, guardId]);
-  assert.deepEqual((await ctx.call('POST', '/gate/release-card', { token, body: { uid: 'A1B2C3D4' } })).body, { session: null, fee: null });
+  const r = (await ctx.call('POST', '/gate/auth', { token, body: { pin: '2468', denied: { uid: 'A1B2C3D4', plate: '59X112345' } } })).body;
+  assert.match(r.message, /PIN bao ve #\d+ \| the A1B2C3D4 \| Phi: 3000d/);
+  const s = (await ctx.call('GET', '/sessions?plate=59X112345', { token })).body.sessions.at(-1); // lượt vào 1 giờ trước
+  assert.deepEqual([s.override_name, s.fee], ['Nguyễn Văn Tuấn', 3000]);
 });
 
-test('nhật ký cổng và lệnh mở cổng từ app quản lý (ĐT cổng ra hỏi định kỳ)', async () => {
-  assert.equal((await ctx.call('POST', '/gate/events', { token, body: { gate: 'x', kind: 'scan' } })).status, 400);
-  const e = await ctx.call('POST', '/gate/events', { token, body: { gate: 'in', kind: 'scan', uid: 'a1b2c3d4', status: 'ok', plate: '59X112345', open: false } });
-  assert.deepEqual([e.status, e.body.uid], [201, 'A1B2C3D4']);
+test('đăng ký vân tay rồi chấm công bằng vân tay: vào ca, ra ca', async () => {
+  assert.equal((await ctx.call('POST', '/gate/enrolled', { token, body: { id: 999 } })).status, 404);
+  assert.equal((await ctx.call('POST', '/gate/enrolled', { token, body: { id: guardId } })).body.ok, true);
+  assert.deepEqual((await ctx.call('POST', '/gate/punch', { token, body: { finger: 77 } })).body,
+    { ok: false, pinWrong: false, l1: 'KHONG RO', l2: 'Van tay #77 chua gan' });
 
+  const vao = (await ctx.call('POST', '/gate/punch', { token, body: { finger: guardId } })).body;
+  assert.deepEqual([vao.ok, vao.l1], [true, 'VAO CA']);
+  assert.match(vao.l2, /^Tuan \d\d:\d\d/);
+  const ra = (await ctx.call('POST', '/gate/punch', { token, body: { pin: '2468' } })).body;
+  assert.equal(ra.l1, 'RA CA');
+  const att = (await ctx.call('GET', '/attendance', { token })).body.records[0];
+  assert.deepEqual([att.method_in, att.method_out, att.open], ['finger', 'pin', false]);
+});
+
+test('lệnh mở cổng từ app quản lý: ĐT cổng ra hỏi định kỳ, lệnh quá cũ bị bỏ', async () => {
   const cmd = (await ctx.call('POST', '/gate/open', { token })).body;
-  await ctx.db.insert(ctx.db.GateEvent, { gate: 'out', kind: 'open_cmd', created_at: ago(1) }); // quá cũ, bỏ qua
+  await ctx.db.insert(ctx.db.GateEvent, { gate: 'out', kind: 'open_cmd', created_at: ago(1) });
   assert.deepEqual((await ctx.call('GET', '/gate/commands', { token })).body.map((c) => c.id), [cmd.id]);
   assert.equal((await ctx.call('POST', `/gate/commands/${cmd.id}/done`, { token })).body.status, 'done');
   assert.deepEqual((await ctx.call('GET', '/gate/commands', { token })).body, []);
-});
-
-test('chấm công: mở ca, chỉ 1 ca đang mở mỗi bảo vệ, đóng ca', async () => {
-  assert.equal((await ctx.call('GET', `/gate/attendance/open?guardId=${guardId}`, { token })).body, null);
-  const a = await ctx.call('POST', '/gate/attendance', { token, body: { guard_id: guardId, shift_id: 1, shift_name: 'Ca sáng',
-    shift_start: '2026-10-30T06:00:00+07:00', shift_end: '2026-10-30T14:00:00+07:00', method_in: 'finger' } });
-  assert.deepEqual([a.status, a.body.shift_name], [201, 'Ca sáng']);
-  assert.equal((await ctx.call('POST', '/gate/attendance', { token, body: { guard_id: guardId, method_in: 'pin' } })).status, 409);
-  assert.equal((await ctx.call('GET', `/gate/attendance/open?guardId=${guardId}`, { token })).body.id, a.body.id);
-  const c = await ctx.call('POST', `/gate/attendance/${a.body.id}/close`, { token, body: { method_out: 'pin' } });
-  assert.deepEqual([c.body.method_out, Boolean(c.body.time_out)], ['pin', true]);
-  assert.equal((await ctx.call('POST', `/gate/attendance/${a.body.id}/close`, { token, body: { method_out: 'pin' } })).status, 409);
+  assert.equal((await ctx.call('POST', '/gate/emergency', { token, body: { on: true } })).body.message, 'Bat khan cap');
 });
 
 test('API cổng chỉ cho quản lý / admin', async () => {
   const guard = await loginAs(ctx, 'guard', 'baove');
-  assert.equal((await ctx.call('GET', '/gate/context?uid=A1B2C3D4', { token: guard })).status, 403);
+  assert.equal((await ctx.call('POST', '/gate/scan', { token: guard, body: { gate: 'in', uid: 'A1B2C3D4' } })).status, 403);
   assert.equal((await ctx.call('GET', '/gate/commands')).status, 401);
 });

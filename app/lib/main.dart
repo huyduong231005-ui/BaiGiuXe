@@ -2,7 +2,6 @@ import 'dart:io' show Platform;
 
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'api.dart';
 import 'google_auth.dart';
@@ -18,20 +17,13 @@ import 'screens/history_screen.dart';
 import 'screens/login_screen.dart';
 import 'screens/settings_screen.dart';
 
-const supabaseUrl = String.fromEnvironment('SUPABASE_URL');
-const supabaseKey = String.fromEnvironment('SUPABASE_KEY');
-
 late final SharedPreferences prefs;
+
+/// Khoá prefs: máy này đăng nhập ở chế độ "Thiết bị camera" (chọn vai trò theo máy: quản lý / camera cổng).
+const deviceModeKey = 'device_mode';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  if (supabaseUrl.isEmpty || supabaseKey.isEmpty) {
-    runApp(const MaterialApp(
-      home: Scaffold(body: Center(child: Text('Thiếu --dart-define SUPABASE_URL / SUPABASE_KEY'))),
-    ));
-    return;
-  }
-  await Supabase.initialize(url: supabaseUrl, publishableKey: supabaseKey);
   prefs = await SharedPreferences.getInstance();
   api.restore(prefs);
   runApp(const App());
@@ -79,32 +71,31 @@ class App extends StatelessWidget {
         title: 'Bãi giữ xe',
         theme: _theme(Brightness.light),
         darkTheme: _theme(Brightness.dark),
-        // Tài khoản API (quản lý / bảo vệ) ưu tiên; không có thì phiên Supabase của ĐT camera.
+        // Mọi thứ qua REST API. ĐT gắn ở cổng đăng nhập tài khoản quản lý ở chế độ "Thiết bị camera"
+        // rồi chọn vai trò của máy (camera cổng vào / ra / cả 2, hoặc quản lý).
         home: ValueListenableBuilder<ApiUser?>(
           valueListenable: api.session,
-          builder: (_, user, _) => user != null
-              ? AppLock(
-                  key: ValueKey(user.username),
-                  child: user.isStaff
-                      ? ManagerHome(admin: user.role == 'admin')
-                      : user.isCustomer
-                          ? CustomerHome(user)
-                          : GuardHome(user),
-                )
-              : StreamBuilder<AuthState>(
-                  stream: Supabase.instance.client.auth.onAuthStateChange,
-                  builder: (_, _) =>
-                      Supabase.instance.client.auth.currentSession == null ? const LoginScreen() : const RoleHome(),
-                ),
+          builder: (_, user, _) => user == null
+              ? const LoginScreen()
+              : user.isStaff && (prefs.getBool(deviceModeKey) ?? false)
+                  ? RoleHome(admin: user.role == 'admin')
+                  : AppLock(
+                      key: ValueKey(user.username),
+                      child: user.isStaff
+                          ? ManagerHome(admin: user.role == 'admin')
+                          : user.isCustomer
+                              ? CustomerHome(user)
+                              : GuardHome(user),
+                    ),
         ),
       );
 }
 
-/// Đăng xuất cả tài khoản API lẫn phiên Supabase (thiết bị camera).
+/// Đăng xuất (cả Google nếu có); máy camera thôi ở chế độ thiết bị.
 Future<void> signOutAll() async {
   await googleSignOut();
+  await prefs.remove(deviceModeKey);
   await api.logout();
-  if (Supabase.instance.client.auth.currentSession != null) await Supabase.instance.client.auth.signOut();
 }
 
 /// Tài khoản bảo vệ: xem chỗ trống và bảng công của mình.
@@ -133,7 +124,9 @@ class GuardHome extends StatelessWidget {
 
 /// Chọn vai trò một lần trên mỗi thiết bị: 'manager' | 'in' | 'out' | 'both'.
 class RoleHome extends StatefulWidget {
-  const RoleHome({super.key});
+  const RoleHome({super.key, this.admin = false});
+
+  final bool admin;
 
   @override
   State<RoleHome> createState() => _RoleHomeState();
@@ -152,7 +145,7 @@ class _RoleHomeState extends State<RoleHome> {
     void reset() => _set(null);
     return switch (role) {
       'in' || 'out' || 'both' => CameraScreen(gate: role!, onExit: reset),
-      'manager' => ManagerHome(onChangeRole: reset),
+      'manager' => ManagerHome(onChangeRole: reset, admin: widget.admin),
       _ => Scaffold(
           appBar: AppBar(title: const Text('Thiết bị này dùng để')),
           body: ListView(padding: const EdgeInsets.all(16), children: [
@@ -197,7 +190,7 @@ class _RoleCard extends StatelessWidget {
 class ManagerHome extends StatefulWidget {
   const ManagerHome({super.key, this.onChangeRole, this.onShowCamera, this.admin = false});
 
-  final VoidCallback? onChangeRole; // chỉ có trên thiết bị đăng nhập Supabase (chọn vai trò theo máy)
+  final VoidCallback? onChangeRole; // chỉ có ở chế độ thiết bị camera (chọn vai trò theo máy)
   final bool admin; // admin có thêm tab Tài khoản (quản trị người dùng)
   final VoidCallback? onShowCamera; // có trên ĐT camera: thêm mục "Camera" ở thanh dưới
 
@@ -241,11 +234,10 @@ class _ManagerHomeState extends State<ManagerHome> {
 
 /// Snackbar báo lỗi dùng chung cho các màn hình.
 void showError(BuildContext context, Object e) {
-  final msg = e is PostgrestException ? e.message : e.toString();
-  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg), backgroundColor: Colors.red));
+  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e'), backgroundColor: Colors.red));
 }
 
-/// Ảnh biển số trong bucket private 'plates' (API cấp link ký có hạn 1 giờ).
+/// Ảnh biển số lưu trên API (MongoDB), xem qua link ký có hạn 1 giờ.
 /// Khách hàng dùng [endpoint] '/me/plates/url': chỉ xem được ảnh xe của mình.
 class PlateImage extends StatelessWidget {
   const PlateImage(this.path, {super.key, this.height = 200, this.endpoint = '/plates/url'});

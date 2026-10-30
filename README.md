@@ -1,36 +1,27 @@
 # BaiGiuXe — Quản lý bãi giữ xe
 
-ESP32 (2 đầu đọc RFID, barrier, OLED, bàn phím, vân tay) + 2 điện thoại làm camera chụp biển số + app Flutter quản lý, dùng chung CSDL Supabase. Danh sách thư viện và công nghệ chi tiết: [công nghệ.md](công%20nghệ.md).
+ESP32 (2 đầu đọc RFID, barrier, OLED, bàn phím, vân tay) + 2 điện thoại làm camera chụp biển số + app Flutter quản lý. Mọi dữ liệu đi qua REST API (Node.js, deploy Render), CSDL MongoDB Atlas. Danh sách thư viện và công nghệ chi tiết: [công nghệ.md](công%20nghệ.md).
 
 ```
 ESP32 (WiFi bãi xe) --MQTT bgx/evt--> EMQX Cloud --> ĐT camera của cổng đó (WiFi hoặc 4G)
-ĐT camera: chụp -> REST API -> Plate Recognizer -> quyết định -> MQTT bgx/cmd -> ESP32: còi / OLED / barrier
-ĐT camera ghi sessions, gate_events, attendance, ảnh vào Supabase
-App quản lý --HTTPS--> REST API (Render) --> Supabase: tổng quan, lịch sử + doanh thu, thẻ, bảo vệ + bảng công, cài đặt
+ĐT camera: chụp -> REST API /plates/recognize (Plate Recognizer) -> REST API /gate/scan (API kiểm tra, ghi lượt gửi)
+           -> MQTT bgx/cmd -> ESP32: còi / OLED / barrier
+App quản lý / khách hàng --HTTPS--> REST API (Render) --> MongoDB Atlas
 ```
 
-REST API đang chạy ở https://baigiuxe.onrender.com (danh sách API, số chỗ trống trực tiếp) · thử từng API: https://baigiuxe.onrender.com/docs
+REST API: https://baigiuxe.onrender.com (danh sách API, số chỗ trống trực tiếp) · thử từng API: https://baigiuxe.onrender.com/docs
 
 | Thư mục | Nội dung |
 |---|---|
-| `supabase/migrations/` | `0001_init.sql` bảng, RLS, RPC, bucket ảnh, realtime · `0002_ble.sql` hàm kiểm tra bảo vệ · `0003_entry_constraints.sql` ràng buộc xe vào · `0004_attendance.sql` ca trực + chấm công |
-| `app/` | Flutter (Android / iOS / macOS). Một app, 3 vai trò: Quản lý, Camera cổng vào, Camera cổng ra (hoặc 1 ĐT cho cả 2 cổng) |
+| `backend/` | REST API Node.js + Express + Mongoose (MongoDB Atlas), deploy Render (`render.yaml`). Xử lý mọi nghiệp vụ: đăng nhập OTP / Google, thẻ, lượt gửi, phí, cổng, bảo vệ, chấm công, vé tháng, báo cáo |
+| `app/` | Flutter (Android / iOS / macOS). Một app: Quản lý, Khách hàng (vé tháng), Bảo vệ, và chế độ Thiết bị camera (cổng vào / ra / cả 2) |
 | `firmware/` | PlatformIO cho ESP32 DevKit V1 (`src/main.cpp` firmware chính, `src/hwtest.cpp` thử phần cứng) |
-| `backend/` | REST API Node.js + Express, dữ liệu trên Supabase Postgres, deploy Render (`render.yaml`). `0005_api_users.sql` thêm tài khoản API + OTP |
 
-## 1. Supabase
+## 1. MongoDB Atlas
 
-1. Tạo project, mở **SQL Editor**, chạy lần lượt các file trong `supabase/migrations/` (`0001_init.sql` → `0004_attendance.sql`).
-2. **Authentication → Sign In / Providers**: tắt *Allow new users to sign up* (chỉ admin tạo tài khoản).
-3. **Authentication → Users → Add user**: tạo tài khoản nhân viên (tick *Auto Confirm User*). Một tài khoản dùng chung được cho app quản lý và 2 ĐT camera.
-4. Gán vai trò `staff` bằng SQL (thiếu bước này thì đăng nhập được nhưng không đọc/ghi được dữ liệu):
-   ```sql
-   update auth.users set raw_app_meta_data = raw_app_meta_data || '{"role":"staff"}' where email = 'nhanvien@...';
-   ```
-   User đang đăng nhập phải đăng xuất rồi đăng nhập lại thì role mới có hiệu lực.
-5. Lấy `Project URL` và `Publishable key` trong **Project Settings → API Keys**.
-
-ESP32 không cần tài khoản Supabase: nó chỉ nói chuyện với ĐT qua MQTT, ĐT lo phần CSDL.
+1. Tạo cluster free (M0), **Database Access** tạo user, **Network Access** cho phép `0.0.0.0/0` (Render không có IP cố định).
+2. **Connect → Drivers** lấy chuỗi `mongodb+srv://...`, thêm tên database sau dấu `/`, VD `...mongodb.net/baigiuxe`.
+3. Không cần tạo bảng: lần chạy đầu API tự tạo index, dòng cài đặt và 3 ca trực mặc định.
 
 ## 2. Plate Recognizer
 
@@ -40,14 +31,14 @@ ESP32 không cần tài khoản Supabase: nó chỉ nói chuyện với ĐT qua 
 
 ```bash
 cd backend
-npm test                 # 25 test chạy trên Postgres trong bộ nhớ (PGlite) với đúng các migration
-cp .env.example .env     # điền DATABASE_URL (Session pooler), SUPABASE_SERVICE_KEY, PLATE_TOKEN...
+npm test                 # 41 test, MongoDB trong bộ nhớ (mongodb-memory-server)
+cp .env.example .env     # điền MONGODB_URI, JWT_SECRET, PLATE_TOKEN, GOOGLE_CLIENT_ID, BREVO_API_KEY, MAIL_FROM
 npm run dev
+npm run seed-demo        # tài khoản + thẻ + lượt gửi + bảng công mẫu để demo (xoá: npm run seed-demo -- --remove)
 ```
 
-Deploy: Render → New Web Service → repo này, Root Directory `backend`, Build `npm ci --omit=dev`, Start `npm start`,
-nhập các biến trong `render.yaml`. `DATABASE_URL` phải là chuỗi **Session pooler** (Render không ra được IPv6 của
-kết nối trực tiếp). Tài khoản đăng ký qua app là bảo vệ; cấp quyền admin: `npm run make-admin -- <tên đăng nhập>`.
+Deploy: Render → New → Blueprint → repo này (đọc `render.yaml`), nhập các biến bí mật. Tài khoản tự đăng ký qua app là
+khách hàng; cấp quyền admin: `npm run make-admin -- <tên đăng nhập>`.
 
 ## 3. EMQX Cloud (MQTT)
 
@@ -64,13 +55,13 @@ ESP32 và 2 ĐT camera nói chuyện qua broker MQTT, nên ĐT dùng WiFi hay 4G
 ```bash
 cd app
 flutter test
-# Sửa app/dart_defines.json: SUPABASE_URL, SUPABASE_KEY, MQTT_HOST, MQTT_USER, MQTT_PASS (API_URL mặc định baigiuxe.onrender.com)
+# Sửa app/dart_defines.json: MQTT_HOST, MQTT_USER, MQTT_PASS (API_URL mặc định baigiuxe.onrender.com)
 flutter build apk --release --dart-define-from-file=dart_defines.json
 ```
 
-Màn đăng nhập có 2 kiểu:
-- **Tài khoản** (quản lý / bảo vệ): tên đăng nhập + mật khẩu → mã OTP gửi email, hoặc Google, hoặc đăng ký mới. Mọi màn quản lý gọi REST API. Tài khoản bảo vệ chỉ xem bảng công của mình.
-- **Thiết bị camera**: tài khoản nhân viên Supabase như trước, rồi chọn vai trò:
+Màn đăng nhập (tên đăng nhập + mật khẩu → mã OTP gửi email, hoặc Google, hoặc đăng ký mới) có 2 chế độ:
+- **Tài khoản**: quản lý / admin vào màn quản lý, khách hàng vào màn vé tháng, bảo vệ xem bảng công của mình.
+- **Thiết bị camera**: đăng nhập tài khoản quản lý rồi chọn vai trò của máy:
 - **Camera cổng vào / ra** (Android, iOS): gắn điện thoại nhìn thẳng biển số, cắm sạc. Màn hình luôn sáng. Màn camera ở lại liên tục để quét xe xếp hàng, hiện 4 xe gần nhất.
 - **Quản lý** (mọi nền tảng, kể cả macOS).
 
@@ -107,7 +98,7 @@ pio run -t upload && pio device monitor
 2. Đăng ký vân tay ở ESP32: **B** → PIN của bảo vệ đó → **#** → đặt ngón tay, nhấc ra, đặt lại. Vân tay lưu vào AS608 ở ô số = ID bảo vệ, app tự gán vân tay cho bảo vệ.
 3. Chấm công: **C** → đặt vân tay (hoặc nhập PIN → **#**). Lần đầu là vào ca, lần sau là ra ca. Bảng công tính trễ / về sớm theo ca trực khai báo trong Cài đặt.
 
-Đăng ký vân tay, mở cổng bằng PIN và chấm công đều cần ĐT cổng ra đang mở app (ĐT kiểm tra PIN và ghi CSDL). Mở cổng bằng vân tay đã đăng ký thì không cần mạng.
+Đăng ký vân tay, mở cổng bằng PIN và chấm công đều cần ĐT cổng ra đang mở app (ĐT chuyển lên API kiểm tra PIN và ghi CSDL). Mở cổng bằng vân tay đã đăng ký thì không cần mạng.
 
 ### Thao tác ở cổng
 | Tình huống | ESP32 |
@@ -123,9 +114,9 @@ pio run -t upload && pio device monitor
 
 ## Bảo mật
 
-`app/dart_defines.json` và `firmware/src/secrets.h` **đang được đưa lên repo** (mật khẩu WiFi, mật khẩu MQTT, token Plate Recognizer, khoá Supabase). Nếu repo để công khai, hãy đổi các mật khẩu/token này định kỳ, hoặc đưa 2 file trở lại `.gitignore` và chỉ giữ file mẫu.
+`app/dart_defines.json` và `firmware/src/secrets.h` **đang được đưa lên repo** (mật khẩu WiFi, mật khẩu MQTT). Nếu repo để công khai, hãy đổi các mật khẩu/token này định kỳ, hoặc đưa 2 file trở lại `.gitignore` và chỉ giữ file mẫu.
 
 ## Chưa làm (có chủ đích)
 - Hàng đợi offline khi mất internet (vân tay đã đăng ký và nút khẩn cấp vẫn mở cổng được).
-- Tự xoá ảnh cũ trong bucket `plates`.
-- Sửa / xoá tay một lượt chấm công trong bảng công (hiện chỉ sửa được bằng SQL).
+- Giữ ảnh biển số lâu hơn 90 ngày (ảnh lưu trong MongoDB, tự xoá sau 90 ngày để không đầy 512MB của Atlas free).
+- Sửa / xoá tay một lượt chấm công trong bảng công.

@@ -10,25 +10,26 @@ Tài liệu liệt kê toàn bộ phần cứng, thư viện, dịch vụ và c�
  (WiFi bãi xe)    bgx/evt, bgx/cmd, bgx/esp,       (broker)           (WiFi hoặc 4G)
                   bgx/phone/<cổng>                                         |
                                                                            | HTTPS
-                                          Plate Recognizer API  <----------+  (đọc biển số)
-                                                                           |
-                                          Supabase  <----------------------+  (CSDL, ảnh, đăng nhập)
-                                              ^
-                                              |  HTTPS + Realtime (WebSocket)
-                                          App quản lý (Android / iOS / macOS)
+                     Plate Recognizer API  <--  REST API (Render)  <-------+
+                                                  Node.js + Express
+                                                        |
+                                                  MongoDB Atlas (CSDL + ảnh)
+                                                        ^
+                                                        |  HTTPS
+                                          App quản lý / khách hàng (Android / iOS / macOS)
 ```
 
 Luồng một lượt quẹt thẻ:
 1. ESP32 đọc UID thẻ RFID, gửi sự kiện `scan` lên MQTT.
-2. Điện thoại camera của cổng đó nhận sự kiện, chụp ảnh và gửi lên Plate Recognizer để đọc biển số.
-3. Điện thoại kiểm tra thẻ và lượt gửi trong Supabase, quyết định cho qua hay từ chối, rồi gửi kết quả về ESP32 qua MQTT.
+2. Điện thoại camera của cổng đó nhận sự kiện, chụp ảnh và gửi lên API `/plates/recognize` (API gọi Plate Recognizer) để đọc biển số.
+3. Điện thoại gửi UID + biển lên API `/gate/scan`. API kiểm tra thẻ, chỗ trống, biển, vé tháng, tính phí, ghi lượt gửi và nhật ký, trả về kết quả kèm 2 dòng chữ cho OLED. Điện thoại chuyển kết quả về ESP32 qua MQTT.
 4. ESP32 bíp còi, hiện kết quả lên OLED và mở barrier (ở cổng ra).
-5. Điện thoại lưu ảnh và nhật ký vào Supabase. App quản lý thấy cập nhật ngay qua Realtime.
+5. Điện thoại tải ảnh (đã thu nhỏ) lên API. App quản lý tải lại định kỳ để thấy xe ra vào.
 
 Luồng bảo vệ (bàn phím + vân tay):
-- **Mở cổng:** vân tay đã đăng ký được AS608 so khớp ngay trên ESP32 và mở barrier, không cần mạng. Mở bằng PIN (phím A) thì điện thoại kiểm tra PIN qua hàm `find_guard` trong Supabase.
-- **Đăng ký vân tay (phím B):** điện thoại kiểm tra PIN bảo vệ, ESP32 lấy 2 ảnh cùng một ngón, ghép mẫu và lưu vào AS608 ở ô số = ID bảo vệ, rồi điện thoại ghi `finger_id` cho bảo vệ đó.
-- **Chấm công (phím C):** ESP32 gửi vân tay/PIN lên, điện thoại xác định bảo vệ, tự quyết vào ca hay ra ca, xếp vào ca gần nhất theo lịch, tính số phút trễ / về sớm rồi ghi bảng `attendance`.
+- **Mở cổng:** vân tay đã đăng ký được AS608 so khớp ngay trên ESP32 và mở barrier, không cần mạng. Mở bằng PIN (phím A) thì điện thoại gửi PIN lên API `/gate/auth` kiểm tra.
+- **Đăng ký vân tay (phím B):** API kiểm tra PIN bảo vệ, ESP32 lấy 2 ảnh cùng một ngón, ghép mẫu và lưu vào AS608 ở ô số = ID bảo vệ, rồi API (`/gate/enrolled`) ghi `finger_id` cho bảo vệ đó.
+- **Chấm công (phím C):** ESP32 gửi vân tay/PIN lên, điện thoại chuyển cho API `/gate/punch`. API xác định bảo vệ, tự quyết vào ca hay ra ca, xếp vào ca gần nhất theo lịch, tính số phút trễ / về sớm rồi ghi `attendance`.
 
 ## 2. Phần cứng
 
@@ -90,38 +91,33 @@ Thư viện:
 
 | Gói | Phiên bản | Dùng để |
 |---|---|---|
-| supabase_flutter | 2.18.3 | Đăng nhập, đọc/ghi CSDL, tải ảnh lên Storage, nhận thay đổi Realtime |
 | mqtt_client | 10.14.0 | Kết nối MQTT (TLS) tới broker để nói chuyện với ESP32, tự kết nối lại khi rớt mạng |
 | camera | 0.12.1 | Mở camera sau, chụp ảnh 1080p, lấy nét và đo sáng vào giữa khung |
 | image | 4.12.0 | Cắt vùng biển số và nén JPEG ngay trên điện thoại trước khi gửi đi |
-| http | 1.6.0 | Gửi ảnh tới API Plate Recognizer |
+| http | 1.6.0 | Gọi REST API (đăng nhập, mọi dữ liệu, gửi ảnh nhận diện biển số) |
 | wakelock_plus | 1.8.2 | Giữ màn hình điện thoại camera luôn sáng |
 | shared_preferences | 2.5.6 | Lưu vai trò thiết bị và mức zoom camera |
 | cupertino_icons | 1.0.9 | Bộ icon |
-| flutter_test (dev) | theo SDK | Kiểm thử đơn vị (`app/test/`): tính phí, quyết định xe vào/ra, so khớp biển, cắt ảnh, xếp ca, tính trễ/sớm |
+| flutter_test (dev) | theo SDK | Kiểm thử đơn vị (`app/test/`): gọi API, hạn vé tháng, cắt ảnh, tính trễ/sớm |
 | flutter_lints (dev) | 6.0.0 | Quy tắc kiểm tra code |
 
 Giao diện dùng Material 3 (sáng/tối theo hệ thống). Các màn chính: Tổng quan, Lịch sử, Thẻ, Bảo vệ (kèm Bảng công), Cài đặt (kèm Ca trực), Camera. Khoá API và thông tin máy chủ truyền vào lúc build qua `--dart-define-from-file=dart_defines.json`.
 
 ## 5. Dịch vụ đám mây
 
-### Supabase (CSDL và backend)
+### REST API (Render) + MongoDB Atlas
 
-| Tính năng | Dùng để |
+| Thành phần | Dùng để |
 |---|---|
-| PostgreSQL | Các bảng `settings`, `cards`, `guards`, `sessions`, `gate_events`, `shift_defs` (ca trực), `attendance` (chấm công) và view `parking_status` |
-| Auth (email + mật khẩu) | Đăng nhập nhân viên. Vai trò lưu trong `app_metadata.role` (`staff`) |
-| Row Level Security | Chỉ tài khoản `staff` mới đọc/ghi được dữ liệu |
-| RPC (hàm SQL) | `find_guard` kiểm tra PIN/vân tay bảo vệ, `set_guard_pin` đặt PIN |
-| pgcrypto | Băm PIN bảo vệ bằng bcrypt (`crypt`, `gen_salt('bf')`) |
-| Storage (bucket private `plates`) | Lưu ảnh biển số lúc vào và lúc ra |
-| Realtime | App quản lý cập nhật ngay khi có xe ra vào. Màn thêm thẻ nhận UID khi quẹt. Màn Bảo vệ tự làm mới khi đăng ký vân tay / chấm công |
-
-Các file migration nằm trong `supabase/migrations/`:
-- `0001_init.sql`: tạo bảng, RLS, RPC, bucket ảnh, realtime.
-- `0002_ble.sql`: cập nhật hàm kiểm tra bảo vệ.
-- `0003_entry_constraints.sql`: ràng buộc xe vào phải có biển số, và mỗi biển chỉ có một lượt đang gửi.
-- `0004_attendance.sql`: bảng ca trực (mặc định Sáng 06–14, Chiều 14–22, Đêm 22–06) và bảng chấm công, mỗi bảo vệ chỉ có một ca đang mở.
+| Node.js 22+, Express 5 | REST API (`backend/`), deploy Render gói free (Singapore) |
+| Mongoose 9 + MongoDB Atlas M0 | Các collection `app_users`, `otps`, `settings`, `cards`, `guards`, `sessions`, `gate_events`, `shift_defs`, `attendance`, `ticket_requests`, `plate_images`. Id số tự tăng (collection `counters`) |
+| Index unique có điều kiện | Mỗi thẻ / mỗi biển chỉ có 1 lượt đang gửi, mỗi bảo vệ chỉ có 1 ca đang mở |
+| jsonwebtoken, bcryptjs | JWT 7 ngày, băm mật khẩu và PIN bảo vệ |
+| Brevo HTTP API | Gửi mã OTP qua email (Render free chặn cổng SMTP) |
+| google-auth-library | Xác thực idToken đăng nhập Google |
+| exceljs | Báo cáo tháng Excel |
+| Swagger UI (`/docs`) | Thử từng API |
+| node:test + mongodb-memory-server | 41 test chạy trên MongoDB trong bộ nhớ |
 
 ### EMQX Cloud Serverless (MQTT broker)
 
@@ -152,7 +148,7 @@ Nhờ dùng MQTT qua Internet, điện thoại camera dùng WiFi hay 4G đều �
 | Flutter SDK, Android SDK, ADB | Build và cài app lên điện thoại |
 | PlatformIO | Build và nạp firmware ESP32, xem Serial |
 | Git | Quản lý mã nguồn |
-| Supabase Dashboard | Tạo tài khoản, chạy SQL, xem dữ liệu |
+| MongoDB Atlas, Render Dashboard | Xem dữ liệu, biến môi trường, log API |
 | EMQX Cloud Console | Tạo broker và tài khoản MQTT |
 
 ## 7. Bảo mật
@@ -160,9 +156,9 @@ Nhờ dùng MQTT qua Internet, điện thoại camera dùng WiFi hay 4G đều �
 | Vấn đề | Cách xử lý |
 |---|---|
 | Kết nối ESP32 và app | MQTT qua TLS. ESP32 kiểm tra chứng chỉ máy chủ bằng root CA nhúng sẵn |
-| Truy cập dữ liệu | RLS trong Supabase: chỉ tài khoản `staff` |
+| Truy cập dữ liệu | Chỉ qua REST API: JWT + phân quyền theo vai trò (admin, manager, guard, customer); ĐT camera dùng tài khoản quản lý |
 | PIN bảo vệ | Băm bcrypt trong CSDL. ESP32 khoá 60 giây sau 5 lần nhập sai |
 | Đăng ký vân tay | Phải nhập đúng PIN của một bảo vệ mới đăng ký được, người lạ không tự thêm vân tay để mở cổng |
-| Ảnh biển số | Bucket private, xem qua link có hạn 1 giờ |
+| Ảnh biển số | Lưu trong MongoDB, xem qua link có chữ ký hạn 1 giờ |
 | Khoá bí mật | `secrets.h` và `dart_defines.json` **đang được đưa lên repo GitHub**. Nếu repo công khai, cần đổi mật khẩu MQTT, mật khẩu WiFi, token Plate Recognizer định kỳ, hoặc đưa 2 file trở lại `.gitignore` |
-| Hạn chế còn lại | Token Plate Recognizer và mật khẩu MQTT của app nằm trong file cài đặt app |
+| Hạn chế còn lại | Mật khẩu MQTT của app nằm trong file cài đặt app (token Plate Recognizer đã nằm trên máy chủ) |

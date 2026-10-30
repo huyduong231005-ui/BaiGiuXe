@@ -137,3 +137,31 @@ export function summarize(rows) {
   }
   return [...by.values()];
 }
+
+// ---------- Ca trực (chép từ logic.dart, nay chạy trên API) ----------
+
+/** Quá lâu chưa chấm ra (quên) thì lần chấm sau tính là vào ca mới. */
+export const MAX_SHIFT_MS = 16 * 3600e3;
+
+/**
+ * Ca có giờ bắt đầu gần t nhất, xét cả hôm trước và hôm sau (vào sớm trước nửa đêm cho ca 00:00, hay chấm
+ * ca đêm lúc 22:00). defs là các dòng shift_defs; trả { def, start, end } hoặc null nếu chưa khai báo ca nào.
+ */
+export function nearestShift(defs, t) {
+  let best = null;
+  for (const def of defs) {
+    const s = minutesOf(def.start_time), e = minutesOf(def.end_time);
+    const len = ((e - s) % 1440 + 1440) % 1440 || 1440;
+    for (const day of [-1, 0, 1]) {
+      const start = new Date(t.getFullYear(), t.getMonth(), t.getDate() + day, 0, s);
+      if (!best || Math.abs(t - start) < Math.abs(t - best.start)) best = { def, start, end: new Date(+start + len * 60e3) };
+    }
+  }
+  return best;
+}
+
+export const hm = (t) => `${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}`;
+
+/** Tên gọi ngắn không dấu cho OLED (font chỉ có ASCII): "Nguyễn Văn Tuấn" -> "Tuan". */
+export const oledName = (full) =>
+  full.trim().split(/\s+/).at(-1).normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/g, 'd').replace(/Đ/g, 'D');

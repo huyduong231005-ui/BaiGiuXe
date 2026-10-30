@@ -2,15 +2,14 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../api.dart';
 import '../google_auth.dart';
-import '../main.dart' show fieldGap, showError;
+import '../main.dart' show deviceModeKey, fieldGap, prefs, showError;
 
-/// Đăng nhập 2 kiểu:
-/// - Tài khoản (quản lý, bảo vệ): qua REST API, mật khẩu + mã OTP email hoặc Google.
-/// - Thiết bị camera ở cổng: tài khoản nhân viên Supabase như trước (ĐT camera ghi thẳng CSDL, không chờ API).
+/// Đăng nhập qua REST API (mật khẩu + mã OTP email, hoặc Google), 2 chế độ:
+/// - Tài khoản: quản lý, bảo vệ, khách hàng.
+/// - Thiết bị camera: ĐT gắn ở cổng, đăng nhập tài khoản quản lý rồi chọn vai trò của máy.
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
 
@@ -34,31 +33,30 @@ class _LoginScreenState extends State<LoginScreen> {
       await action();
     } on ApiException catch (e) {
       if (mounted) setState(() => error = e.message);
-    } on AuthException catch (e) {
-      if (mounted) setState(() => error = e.message);
     } finally {
       if (mounted) setState(() => busy = false);
     }
   }
 
   Future<void> _login() => _run(() async {
-        if (device) {
-          await Supabase.instance.client.auth.signInWithPassword(email: user.text.trim(), password: pass.text);
-          return;
-        }
         final username = user.text.trim().toLowerCase();
         final masked = await api.login(username, pass.text);
         if (!mounted) return;
         await Navigator.push(context, MaterialPageRoute(builder: (_) => OtpScreen(
               maskedEmail: masked,
-              verify: (code) => api.verifyLogin(username, code),
+              verify: (code) async {
+                await prefs.setBool(deviceModeKey, device); // đặt trước khi có phiên để màn đầu tiên đúng chế độ
+                return api.verifyLogin(username, code);
+              },
               resend: () => api.login(username, pass.text),
             )));
       });
 
   Future<void> _google() => _run(() async {
         final idToken = await googleIdToken();
-        if (idToken != null) await api.loginWithGoogle(idToken);
+        if (idToken == null) return;
+        await prefs.setBool(deviceModeKey, false);
+        await api.loginWithGoogle(idToken);
       });
 
   @override
@@ -68,7 +66,7 @@ class _LoginScreenState extends State<LoginScreen> {
     return _AuthScaffold(
       icon: Icons.local_parking,
       title: 'Bãi giữ xe',
-      subtitle: device ? 'Điện thoại gắn ở cổng: đăng nhập tài khoản nhân viên' : 'Đăng nhập tài khoản quản lý / bảo vệ',
+      subtitle: device ? 'Điện thoại gắn ở cổng: đăng nhập tài khoản quản lý' : 'Đăng nhập tài khoản quản lý / bảo vệ / khách hàng',
       child: AutofillGroup(
         child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
           SegmentedButton<bool>(
@@ -85,13 +83,9 @@ class _LoginScreenState extends State<LoginScreen> {
           const SizedBox(height: 20),
           TextField(
             controller: user,
-            decoration: InputDecoration(
-              labelText: device ? 'Email' : 'Tên đăng nhập',
-              prefixIcon: Icon(device ? Icons.email_outlined : Icons.person_outline),
-            ),
-            keyboardType: device ? TextInputType.emailAddress : TextInputType.text,
+            decoration: const InputDecoration(labelText: 'Tên đăng nhập', prefixIcon: Icon(Icons.person_outline)),
             textInputAction: TextInputAction.next,
-            autofillHints: [device ? AutofillHints.email : AutofillHints.username],
+            autofillHints: const [AutofillHints.username],
           ),
           fieldGap,
           TextField(
@@ -107,7 +101,7 @@ class _LoginScreenState extends State<LoginScreen> {
             onPressed: busy ? null : _login,
             child: busy
                 ? const SizedBox.square(dimension: 20, child: CircularProgressIndicator(strokeWidth: 2))
-                : Text(device ? 'Đăng nhập' : 'Đăng nhập (gửi mã OTP)'),
+                : const Text('Đăng nhập (gửi mã OTP)'),
           ),
           if (!device) ...[
             const SizedBox(height: 12),

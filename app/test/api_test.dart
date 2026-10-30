@@ -17,7 +17,6 @@ void main() {
   test('OTP đăng nhập -> lưu token, các lần gọi sau gửi kèm Bearer; mở lại app vẫn còn phiên', () async {
     final auth = <String?>[];
     final a = Api(
-      deviceToken: () => null,
       client: MockClient((req) async {
         auth.add(req.headers['authorization']);
         return req.url.path == '/auth/login/verify' ? _json({'token': 'jwt-1', 'user': user}) : _json({'free': 3});
@@ -31,26 +30,12 @@ void main() {
     await a.get('/status');
     expect(auth, [null, 'Bearer jwt-1']);
 
-    final reopened = Api(deviceToken: () => null)..restore(prefs);
+    final reopened = Api()..restore(prefs);
     expect(reopened.session.value?.username, 'admin');
-  });
-
-  test('ĐT camera chưa có tài khoản API thì dùng token Supabase', () async {
-    String? sent;
-    final a = Api(
-      deviceToken: () => 'supabase-token',
-      client: MockClient((req) async {
-        sent = req.headers['authorization'];
-        return _json({'plate': '59X112345'});
-      }),
-    );
-    await a.get('/cards');
-    expect(sent, 'Bearer supabase-token');
   });
 
   test('lỗi trả về message tiếng Việt của API; 401 thì đăng xuất', () async {
     final a = Api(
-      deviceToken: () => null,
       client: MockClient((req) async => req.url.path == '/auth/login/verify'
           ? _json({'token': 'jwt-1', 'user': user})
           : _json({'message': 'Phiên đăng nhập không hợp lệ hoặc đã hết hạn'}, 401)),

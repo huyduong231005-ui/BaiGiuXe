@@ -4,7 +4,6 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 
 /// REST API đã deploy (thư mục backend/). Đổi khi build: --dart-define=API_URL=https://...
 const apiUrl = String.fromEnvironment('API_URL', defaultValue: 'https://baigiuxe.onrender.com');
@@ -44,20 +43,17 @@ class ApiUser {
 }
 
 class Api {
-  Api({http.Client? client, String? Function()? deviceToken})
-      : _client = client ?? http.Client(),
-        _deviceToken = deviceToken ?? (() => Supabase.instance.client.auth.currentSession?.accessToken);
+  Api({http.Client? client}) : _client = client ?? http.Client();
 
   static const _tokenKey = 'api_token', _userKey = 'api_user';
   // Render free ngủ sau 15 phút, lần gọi đầu có thể mất ~50 giây để thức dậy.
   static const _timeout = Duration(seconds: 70);
 
   final http.Client _client;
-  final String? Function() _deviceToken;
   String? _token;
   SharedPreferences? _prefs;
 
-  /// Người đăng nhập bằng tài khoản API (null = chưa, hoặc đang dùng phiên Supabase của ĐT camera).
+  /// Người đang đăng nhập (null = chưa).
   final session = ValueNotifier<ApiUser?>(null);
 
   /// Mở app: lấy lại phiên đã lưu, không gọi mạng (API có thể đang ngủ). Token hết hạn -> 401 -> đăng xuất.
@@ -67,9 +63,6 @@ class Api {
     final user = prefs.getString(_userKey);
     if (_token != null && user != null) session.value = ApiUser.fromJson(jsonDecode(user) as Map<String, dynamic>);
   }
-
-  /// Tài khoản API nếu có, không thì token Supabase của ĐT camera (API coi vai trò staff là quản lý).
-  String? get _bearer => _token ?? _deviceToken();
 
   Future<dynamic> get(String path, [Map<String, String>? query]) => _send('GET', path, query: query);
   Future<dynamic> post(String path, [Map<String, dynamic>? body]) => _send('POST', path, body: body ?? const {});
@@ -81,9 +74,15 @@ class Api {
   Future<Uint8List> getBytes(String path, [Map<String, String>? query]) async =>
       await _send('GET', path, query: query, raw: true) as Uint8List;
 
-  /// Gửi ảnh JPEG (nhận diện biển số).
+  /// Gửi ảnh JPEG (nhận diện biển số, tải ảnh lượt quẹt lên).
   Future<dynamic> postJpeg(String path, Uint8List jpg, {Duration timeout = _timeout}) =>
       _send('POST', path, jpeg: jpg, timeout: timeout);
+  Future<dynamic> putJpeg(String path, Uint8List jpg, Map<String, String> query) =>
+      _send('PUT', path, jpeg: jpg, query: query);
+
+  /// Gọi API với thời hạn riêng (ĐT camera: ESP32 chỉ chờ kết quả 12 giây).
+  Future<dynamic> postWithin(String path, Map<String, dynamic> body, Duration timeout) =>
+      _send('POST', path, body: body, timeout: timeout);
 
   Future<dynamic> _send(String method, String path,
       {Map<String, dynamic>? body,
@@ -94,8 +93,7 @@ class Api {
     var uri = Uri.parse('$apiUrl$path');
     if (query != null) uri = uri.replace(queryParameters: query);
     final req = http.Request(method, uri);
-    final bearer = _bearer;
-    if (bearer != null) req.headers['authorization'] = 'Bearer $bearer';
+    if (_token != null) req.headers['authorization'] = 'Bearer $_token';
     if (body != null) {
       req.headers['content-type'] = 'application/json';
       req.body = jsonEncode(body);
