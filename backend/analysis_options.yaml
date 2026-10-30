@@ -1,0 +1,6 @@
+include: package:lints/recommended.yaml
+
+analyzer:
+  errors:
+    # Model MongoDB đặt tên như Mongoose (User, Card, Session...) cho dễ đọc
+    non_constant_identifier_names: ignore

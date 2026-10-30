@@ -1,6 +1,6 @@
 # BaiGiuXe — Quản lý bãi giữ xe
 
-ESP32 (2 đầu đọc RFID, barrier, OLED, bàn phím, vân tay) + 2 điện thoại làm camera chụp biển số + app Flutter quản lý. Mọi dữ liệu đi qua REST API (Node.js, deploy Render), CSDL MongoDB Atlas. Danh sách thư viện và công nghệ chi tiết: [công nghệ.md](công%20nghệ.md).
+ESP32 (2 đầu đọc RFID, barrier, OLED, bàn phím, vân tay) + 2 điện thoại làm camera chụp biển số + app Flutter quản lý. Mọi dữ liệu đi qua REST API (Dart, deploy Render), CSDL MongoDB Atlas. Danh sách thư viện và công nghệ chi tiết: [công nghệ.md](công%20nghệ.md).
 
 ```
 ESP32 (WiFi bãi xe) --MQTT bgx/evt--> EMQX Cloud --> ĐT camera của cổng đó (WiFi hoặc 4G)
@@ -13,7 +13,7 @@ REST API: https://bai-giu-xe-api.onrender.com (danh sách API, số chỗ trốn
 
 | Thư mục | Nội dung |
 |---|---|
-| `backend/` | REST API Node.js + Express + Mongoose (MongoDB Atlas), deploy Render (`render.yaml`). Xử lý mọi nghiệp vụ: đăng nhập OTP / Google, thẻ, lượt gửi, phí, cổng, bảo vệ, chấm công, vé tháng, báo cáo |
+| `backend/` | REST API viết bằng Dart (shelf + mongo_dart, MongoDB Atlas), deploy Render bằng Docker (`render.yaml`, `backend/Dockerfile`). Xử lý mọi nghiệp vụ: đăng nhập OTP / Google, thẻ, lượt gửi, phí, cổng, bảo vệ, chấm công, vé tháng, báo cáo |
 | `app/` | Flutter (Android / iOS / macOS). Một app: Quản lý, Khách hàng (vé tháng), Bảo vệ, và chế độ Thiết bị camera (cổng vào / ra / cả 2) |
 | `firmware/` | PlatformIO cho ESP32 DevKit V1 (`src/main.cpp` firmware chính, `src/hwtest.cpp` thử phần cứng) |
 
@@ -48,14 +48,18 @@ REST API: https://bai-giu-xe-api.onrender.com (danh sách API, số chỗ trốn
 
 ```bash
 cd backend
-npm test                 # 47 test, MongoDB trong bộ nhớ (mongodb-memory-server)
+dart pub get
+dart test                # 50 test; cần MongoDB chạy ở localhost:27017 (hoặc đặt TEST_MONGODB_URI), máy ở giờ Việt Nam
 cp .env.example .env     # điền MONGODB_URI, JWT_SECRET, PLATE_TOKEN, GOOGLE_CLIENT_ID, BREVO_API_KEY, MAIL_FROM
-npm run dev
-npm run seed-demo        # tài khoản + thẻ + lượt gửi + bảng công mẫu để demo (xoá: npm run seed-demo -- --remove)
+dart run bin/server.dart
+dart run bin/seed_demo.dart   # tài khoản + thẻ + lượt gửi + bảng công mẫu để demo (xoá: thêm --remove)
 ```
 
+Test dùng MongoDB thật, mỗi file test một database riêng và tự xoá khi xong. Không có MongoDB trên máy thì chạy tạm
+`mongod --dbpath <thư mục trống>` (bản zip MongoDB Community) hoặc `docker run -p 27017:27017 mongo`.
+
 Deploy: Render → New → Blueprint → repo này (đọc `render.yaml`), nhập các biến bí mật. Tài khoản tự đăng ký qua app là
-khách hàng; cấp quyền admin: `npm run make-admin -- <tên đăng nhập>`.
+khách hàng; cấp quyền admin: `dart run bin/make_admin.dart <tên đăng nhập>`.
 
 ## 3. EMQX Cloud (MQTT)
 

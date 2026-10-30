@@ -1,0 +1,2354 @@
+{
+ "openapi": "3.0.3",
+ "info": {
+  "title": "Bãi giữ xe API",
+  "version": "1.0.0",
+  "description": "REST API cho app Flutter quản lý bãi giữ xe. Đăng nhập: /auth/login → mã OTP gửi email → /auth/login/verify trả JWT; bấm Authorize và dán JWT."
+ },
+ "components": {
+  "securitySchemes": {
+   "bearer": {
+    "type": "http",
+    "scheme": "bearer",
+    "bearerFormat": "JWT"
+   }
+  }
+ },
+ "security": [
+  {
+   "bearer": []
+  }
+ ],
+ "paths": {
+  "/auth/register": {
+   "post": {
+    "tags": [
+     "Xác thực"
+    ],
+    "summary": "Đăng ký, gửi OTP",
+    "security": [],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "example": {
+        "email": "ban@gmail.com",
+        "username": "baove1",
+        "fullName": "Lê Văn B",
+        "password": "matkhau1"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "OK"
+     },
+     "400": {
+      "description": "Dữ liệu không hợp lệ"
+     },
+     "401": {
+      "description": "Chưa đăng nhập"
+     }
+    }
+   }
+  },
+  "/auth/register/verify": {
+   "post": {
+    "tags": [
+     "Xác thực"
+    ],
+    "summary": "Xác minh OTP đăng ký → JWT",
+    "security": [],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "example": {
+        "email": "ban@gmail.com",
+        "code": "123456"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "OK"
+     },
+     "400": {
+      "description": "Dữ liệu không hợp lệ"
+     },
+     "401": {
+      "description": "Chưa đăng nhập"
+     }
+    }
+   }
+  },
+  "/auth/login": {
+   "post": {
+    "tags": [
+     "Xác thực"
+    ],
+    "summary": "Mật khẩu đúng → gửi OTP",
+    "security": [],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "example": {
+        "username": "baove1",
+        "password": "matkhau1"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "OK"
+     },
+     "400": {
+      "description": "Dữ liệu không hợp lệ"
+     },
+     "401": {
+      "description": "Chưa đăng nhập"
+     }
+    }
+   }
+  },
+  "/auth/login/verify": {
+   "post": {
+    "tags": [
+     "Xác thực"
+    ],
+    "summary": "Xác minh OTP đăng nhập → JWT",
+    "security": [],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "example": {
+        "username": "baove1",
+        "code": "123456"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "OK"
+     },
+     "400": {
+      "description": "Dữ liệu không hợp lệ"
+     },
+     "401": {
+      "description": "Chưa đăng nhập"
+     }
+    }
+   }
+  },
+  "/auth/google": {
+   "post": {
+    "tags": [
+     "Xác thực"
+    ],
+    "summary": "Đăng nhập Google (idToken) → JWT",
+    "security": [],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "example": {
+        "idToken": "..."
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "OK"
+     },
+     "400": {
+      "description": "Dữ liệu không hợp lệ"
+     },
+     "401": {
+      "description": "Chưa đăng nhập"
+     }
+    }
+   }
+  },
+  "/me": {
+   "get": {
+    "tags": [
+     "Xác thực"
+    ],
+    "summary": "Tài khoản đang đăng nhập",
+    "responses": {
+     "200": {
+      "description": "OK"
+     },
+     "400": {
+      "description": "Dữ liệu không hợp lệ"
+     },
+     "401": {
+      "description": "Chưa đăng nhập"
+     }
+    }
+   },
+   "patch": {
+    "tags": [
+     "Xác thực"
+    ],
+    "summary": "Đổi họ tên / mật khẩu",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "example": {
+        "fullName": "Lê Văn B",
+        "currentPassword": "matkhau1",
+        "newPassword": "matkhau2"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "OK"
+     },
+     "400": {
+      "description": "Dữ liệu không hợp lệ"
+     },
+     "401": {
+      "description": "Chưa đăng nhập"
+     }
+    }
+   }
+  },
+  "/status": {
+   "get": {
+    "tags": [
+     "Bãi xe"
+    ],
+    "summary": "Sức chứa, xe đang gửi, chỗ trống",
+    "security": [],
+    "responses": {
+     "200": {
+      "description": "OK"
+     },
+     "400": {
+      "description": "Dữ liệu không hợp lệ"
+     },
+     "401": {
+      "description": "Chưa đăng nhập"
+     }
+    }
+   }
+  },
+  "/fees/quote": {
+   "post": {
+    "tags": [
+     "Bãi xe"
+    ],
+    "summary": "Tính phí theo bảng giá hiện tại",
+    "security": [],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "example": {
+        "timeIn": "2026-10-30T20:00:00+07:00",
+        "timeOut": "2026-10-31T07:00:00+07:00",
+        "kind": "guest"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "OK"
+     },
+     "400": {
+      "description": "Dữ liệu không hợp lệ"
+     },
+     "401": {
+      "description": "Chưa đăng nhập"
+     }
+    }
+   }
+  },
+  "/sessions": {
+   "get": {
+    "tags": [
+     "Bãi xe"
+    ],
+    "summary": "Lượt gửi theo ngày / xe trong bãi, kèm doanh thu",
+    "parameters": [
+     {
+      "name": "date",
+      "in": "query",
+      "required": false,
+      "description": "Ngày YYYY-MM-DD (mặc định hôm nay)",
+      "example": "2026-10-30",
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "name": "plate",
+      "in": "query",
+      "required": false,
+      "description": "Tìm biển (vào hoặc ra)",
+      "example": "59X1",
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "name": "open",
+      "in": "query",
+      "required": false,
+      "description": "true = xe đang trong bãi",
+      "example": "false",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "OK"
+     },
+     "400": {
+      "description": "Dữ liệu không hợp lệ"
+     },
+     "401": {
+      "description": "Chưa đăng nhập"
+     }
+    }
+   }
+  },
+  "/sessions/lookup": {
+   "get": {
+    "tags": [
+     "Bãi xe"
+    ],
+    "summary": "Tra cứu xe trong bãi theo biển (lệch 1 ký tự), kèm phí tạm tính",
+    "parameters": [
+     {
+      "name": "plate",
+      "in": "query",
+      "required": false,
+      "description": "Biển cần tra",
+      "example": "30A99998",
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "name": "candidates",
+      "in": "query",
+      "required": false,
+      "description": "Phương án đọc khác của OCR, cách nhau dấu phẩy",
+      "example": "",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "OK"
+     },
+     "400": {
+      "description": "Dữ liệu không hợp lệ"
+     },
+     "401": {
+      "description": "Chưa đăng nhập"
+     }
+    }
+   }
+  },
+  "/reports/monthly.xlsx": {
+   "get": {
+    "tags": [
+     "Bãi xe"
+    ],
+    "summary": "Báo cáo tháng Excel: doanh thu, lượt gửi, bảng công",
+    "parameters": [
+     {
+      "name": "month",
+      "in": "query",
+      "required": false,
+      "description": "YYYY-MM",
+      "example": "2026-10",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "OK"
+     },
+     "400": {
+      "description": "Dữ liệu không hợp lệ"
+     },
+     "401": {
+      "description": "Chưa đăng nhập"
+     }
+    }
+   }
+  },
+  "/sessions/{id}/fee": {
+   "get": {
+    "tags": [
+     "Bãi xe"
+    ],
+    "summary": "Phí nếu cho ra bây giờ",
+    "parameters": [
+     {
+      "name": "id",
+      "in": "path",
+      "required": true,
+      "example": 1,
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "OK"
+     },
+     "400": {
+      "description": "Dữ liệu không hợp lệ"
+     },
+     "401": {
+      "description": "Chưa đăng nhập"
+     }
+    }
+   }
+  },
+  "/sessions/{id}/release": {
+   "post": {
+    "tags": [
+     "Bãi xe"
+    ],
+    "summary": "Mất thẻ: đóng lượt + mở cổng ra",
+    "parameters": [
+     {
+      "name": "id",
+      "in": "path",
+      "required": true,
+      "example": 1,
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "OK"
+     },
+     "400": {
+      "description": "Dữ liệu không hợp lệ"
+     },
+     "401": {
+      "description": "Chưa đăng nhập"
+     }
+    }
+   }
+  },
+  "/gate/open": {
+   "post": {
+    "tags": [
+     "Bãi xe"
+    ],
+    "summary": "Mở barrier cổng ra từ xa",
+    "responses": {
+     "200": {
+      "description": "OK"
+     },
+     "400": {
+      "description": "Dữ liệu không hợp lệ"
+     },
+     "401": {
+      "description": "Chưa đăng nhập"
+     }
+    }
+   }
+  },
+  "/events": {
+   "get": {
+    "tags": [
+     "Bãi xe"
+    ],
+    "summary": "Nhật ký cổng gần nhất",
+    "parameters": [
+     {
+      "name": "limit",
+      "in": "query",
+      "required": false,
+      "description": "1-200",
+      "example": "20",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "OK"
+     },
+     "400": {
+      "description": "Dữ liệu không hợp lệ"
+     },
+     "401": {
+      "description": "Chưa đăng nhập"
+     }
+    }
+   }
+  },
+  "/cards": {
+   "get": {
+    "tags": [
+     "Thẻ"
+    ],
+    "summary": "Danh sách thẻ",
+    "parameters": [
+     {
+      "name": "q",
+      "in": "query",
+      "required": false,
+      "description": "Tìm UID / biển / chủ xe",
+      "example": "",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "OK"
+     },
+     "400": {
+      "description": "Dữ liệu không hợp lệ"
+     },
+     "401": {
+      "description": "Chưa đăng nhập"
+     }
+    }
+   },
+   "post": {
+    "tags": [
+     "Thẻ"
+    ],
+    "summary": "Thêm thẻ",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "example": {
+        "uid": "A1B2C3D4",
+        "kind": "monthly",
+        "plate": "59X1-123.45",
+        "owner": "Nguyễn An",
+        "active": true
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "OK"
+     },
+     "400": {
+      "description": "Dữ liệu không hợp lệ"
+     },
+     "401": {
+      "description": "Chưa đăng nhập"
+     }
+    }
+   }
+  },
+  "/cards/{uid}": {
+   "patch": {
+    "tags": [
+     "Thẻ"
+    ],
+    "summary": "Sửa / khoá thẻ",
+    "parameters": [
+     {
+      "name": "uid",
+      "in": "path",
+      "required": true,
+      "example": "A1B2C3D4",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "example": {
+        "active": false
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "OK"
+     },
+     "400": {
+      "description": "Dữ liệu không hợp lệ"
+     },
+     "401": {
+      "description": "Chưa đăng nhập"
+     }
+    }
+   },
+   "delete": {
+    "tags": [
+     "Thẻ"
+    ],
+    "summary": "Xoá thẻ (chưa có lịch sử)",
+    "parameters": [
+     {
+      "name": "uid",
+      "in": "path",
+      "required": true,
+      "example": "A1B2C3D4",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "OK"
+     },
+     "400": {
+      "description": "Dữ liệu không hợp lệ"
+     },
+     "401": {
+      "description": "Chưa đăng nhập"
+     }
+    }
+   }
+  },
+  "/scans/latest": {
+   "get": {
+    "tags": [
+     "Thẻ"
+    ],
+    "summary": "Thẻ vừa quẹt sau mốc since",
+    "parameters": [
+     {
+      "name": "since",
+      "in": "query",
+      "required": false,
+      "description": "Thời điểm ISO 8601",
+      "example": "2026-10-30T00:00:00Z",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "OK"
+     },
+     "400": {
+      "description": "Dữ liệu không hợp lệ"
+     },
+     "401": {
+      "description": "Chưa đăng nhập"
+     }
+    }
+   }
+  },
+  "/settings": {
+   "get": {
+    "tags": [
+     "Thẻ"
+    ],
+    "summary": "Cài đặt bãi",
+    "responses": {
+     "200": {
+      "description": "OK"
+     },
+     "400": {
+      "description": "Dữ liệu không hợp lệ"
+     },
+     "401": {
+      "description": "Chưa đăng nhập"
+     }
+    }
+   },
+   "put": {
+    "tags": [
+     "Thẻ"
+    ],
+    "summary": "Lưu cài đặt",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "example": {
+        "capacity": 50,
+        "priceDay": 3000,
+        "priceNight": 5000,
+        "nightMark": "22:00"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "OK"
+     },
+     "400": {
+      "description": "Dữ liệu không hợp lệ"
+     },
+     "401": {
+      "description": "Chưa đăng nhập"
+     }
+    }
+   }
+  },
+  "/plates/recognize": {
+   "post": {
+    "tags": [
+     "Biển số"
+    ],
+    "summary": "Nhận diện biển từ ảnh JPEG",
+    "requestBody": {
+     "content": {
+      "image/jpeg": {
+       "schema": {
+        "type": "string",
+        "format": "binary"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "OK"
+     },
+     "400": {
+      "description": "Dữ liệu không hợp lệ"
+     },
+     "401": {
+      "description": "Chưa đăng nhập"
+     }
+    }
+   }
+  },
+  "/plates/url": {
+   "get": {
+    "tags": [
+     "Biển số"
+    ],
+    "summary": "Link ảnh biển số có hạn 1 giờ",
+    "parameters": [
+     {
+      "name": "path",
+      "in": "query",
+      "required": false,
+      "description": "Đường dẫn ảnh",
+      "example": "in/2026-10-30/1761800000000_A1B2C3D4.jpg",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "OK"
+     },
+     "400": {
+      "description": "Dữ liệu không hợp lệ"
+     },
+     "401": {
+      "description": "Chưa đăng nhập"
+     }
+    }
+   }
+  },
+  "/gate/scan": {
+   "post": {
+    "tags": [
+     "Cổng (ĐT camera)"
+    ],
+    "summary": "Quẹt thẻ: API kiểm tra thẻ / biển / chỗ trống, mở hoặc đóng lượt gửi, trả 2 dòng OLED",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "example": {
+        "gate": "in",
+        "uid": "A1B2C3D4",
+        "plate": "59X112345",
+        "score": 0.95,
+        "candidates": [
+         "59X112345"
+        ],
+        "img": "in/2026-10-30/1761800000000_A1B2C3D4.jpg"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "OK"
+     },
+     "400": {
+      "description": "Dữ liệu không hợp lệ"
+     },
+     "401": {
+      "description": "Chưa đăng nhập"
+     }
+    }
+   }
+  },
+  "/gate/auth": {
+   "post": {
+    "tags": [
+     "Cổng (ĐT camera)"
+    ],
+    "summary": "Bảo vệ mở tay bằng PIN / vân tay (đóng lượt bị từ chối gần đây)",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "example": {
+        "pin": "2468",
+        "enroll": false,
+        "denied": {
+         "uid": "A1B2C3D4",
+         "plate": "59X112345"
+        }
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "OK"
+     },
+     "400": {
+      "description": "Dữ liệu không hợp lệ"
+     },
+     "401": {
+      "description": "Chưa đăng nhập"
+     }
+    }
+   }
+  },
+  "/gate/enrolled": {
+   "post": {
+    "tags": [
+     "Cổng (ĐT camera)"
+    ],
+    "summary": "ESP32 vừa lưu vân tay vào ô = ID bảo vệ",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "example": {
+        "id": 1
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "OK"
+     },
+     "400": {
+      "description": "Dữ liệu không hợp lệ"
+     },
+     "401": {
+      "description": "Chưa đăng nhập"
+     }
+    }
+   }
+  },
+  "/gate/punch": {
+   "post": {
+    "tags": [
+     "Cổng (ĐT camera)"
+    ],
+    "summary": "Chấm công: vào ca gần nhất / ra ca",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "example": {
+        "finger": 1
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "OK"
+     },
+     "400": {
+      "description": "Dữ liệu không hợp lệ"
+     },
+     "401": {
+      "description": "Chưa đăng nhập"
+     }
+    }
+   }
+  },
+  "/gate/emergency": {
+   "post": {
+    "tags": [
+     "Cổng (ĐT camera)"
+    ],
+    "summary": "Ghi bật / tắt chế độ khẩn cấp",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "example": {
+        "on": true
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "OK"
+     },
+     "400": {
+      "description": "Dữ liệu không hợp lệ"
+     },
+     "401": {
+      "description": "Chưa đăng nhập"
+     }
+    }
+   }
+  },
+  "/gate/commands": {
+   "get": {
+    "tags": [
+     "Cổng (ĐT camera)"
+    ],
+    "summary": "Lệnh mở cổng đang chờ (30 giây gần nhất)",
+    "responses": {
+     "200": {
+      "description": "OK"
+     },
+     "400": {
+      "description": "Dữ liệu không hợp lệ"
+     },
+     "401": {
+      "description": "Chưa đăng nhập"
+     }
+    }
+   }
+  },
+  "/gate/commands/{id}/done": {
+   "post": {
+    "tags": [
+     "Cổng (ĐT camera)"
+    ],
+    "summary": "Đã mở cổng theo lệnh",
+    "parameters": [
+     {
+      "name": "id",
+      "in": "path",
+      "required": true,
+      "example": 1,
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "OK"
+     },
+     "400": {
+      "description": "Dữ liệu không hợp lệ"
+     },
+     "401": {
+      "description": "Chưa đăng nhập"
+     }
+    }
+   }
+  },
+  "/gate/images": {
+   "put": {
+    "tags": [
+     "Cổng (ĐT camera)"
+    ],
+    "summary": "Tải ảnh biển số lên (lưu trong MongoDB 90 ngày)",
+    "parameters": [
+     {
+      "name": "path",
+      "in": "query",
+      "required": false,
+      "description": "Đường dẫn ảnh",
+      "example": "in/2026-10-30/1761800000000_A1B2C3D4.jpg",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "image/jpeg": {
+       "schema": {
+        "type": "string",
+        "format": "binary"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "OK"
+     },
+     "400": {
+      "description": "Dữ liệu không hợp lệ"
+     },
+     "401": {
+      "description": "Chưa đăng nhập"
+     }
+    }
+   }
+  },
+  "/lot/map": {
+   "get": {
+    "tags": [
+     "Sơ đồ bãi"
+    ],
+    "summary": "Sơ đồ bãi: khu, ô, trạng thái (trống / cư dân / có xe), biển số, căn hộ",
+    "responses": {
+     "200": {
+      "description": "OK"
+     },
+     "400": {
+      "description": "Dữ liệu không hợp lệ"
+     },
+     "401": {
+      "description": "Chưa đăng nhập"
+     }
+    }
+   }
+  },
+  "/lot/map/public": {
+   "get": {
+    "tags": [
+     "Sơ đồ bãi"
+    ],
+    "summary": "Sơ đồ bãi không kèm biển / chủ xe (cư dân, khách xem)",
+    "responses": {
+     "200": {
+      "description": "OK"
+     },
+     "400": {
+      "description": "Dữ liệu không hợp lệ"
+     },
+     "401": {
+      "description": "Chưa đăng nhập"
+     }
+    }
+   }
+  },
+  "/vehicle-types": {
+   "get": {
+    "tags": [
+     "Sơ đồ bãi"
+    ],
+    "summary": "Loại xe + bảng giá",
+    "responses": {
+     "200": {
+      "description": "OK"
+     },
+     "400": {
+      "description": "Dữ liệu không hợp lệ"
+     },
+     "401": {
+      "description": "Chưa đăng nhập"
+     }
+    }
+   },
+   "post": {
+    "tags": [
+     "Sơ đồ bãi"
+    ],
+    "summary": "Thêm loại xe",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "example": {
+        "code": "ebike",
+        "name": "Xe máy điện",
+        "priceDay": 4000,
+        "priceNight": 8000,
+        "priceMonth": 120000
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "OK"
+     },
+     "400": {
+      "description": "Dữ liệu không hợp lệ"
+     },
+     "401": {
+      "description": "Chưa đăng nhập"
+     }
+    }
+   }
+  },
+  "/vehicle-types/{id}": {
+   "put": {
+    "tags": [
+     "Sơ đồ bãi"
+    ],
+    "summary": "Sửa giá loại xe",
+    "parameters": [
+     {
+      "name": "id",
+      "in": "path",
+      "required": true,
+      "example": 1,
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "example": {
+        "name": "Xe máy",
+        "priceDay": 5000,
+        "priceNight": 10000,
+        "priceMonth": 150000
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "OK"
+     },
+     "400": {
+      "description": "Dữ liệu không hợp lệ"
+     },
+     "401": {
+      "description": "Chưa đăng nhập"
+     }
+    }
+   },
+   "delete": {
+    "tags": [
+     "Sơ đồ bãi"
+    ],
+    "summary": "Xoá loại xe chưa dùng",
+    "parameters": [
+     {
+      "name": "id",
+      "in": "path",
+      "required": true,
+      "example": 4,
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "OK"
+     },
+     "400": {
+      "description": "Dữ liệu không hợp lệ"
+     },
+     "401": {
+      "description": "Chưa đăng nhập"
+     }
+    }
+   }
+  },
+  "/zones": {
+   "post": {
+    "tags": [
+     "Sơ đồ bãi"
+    ],
+    "summary": "Thêm khu (tên 1 chữ cái, vẽ ô của khu trên mặt bằng bằng chữ đó)",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "example": {
+        "name": "A",
+        "vehicleType": "motorbike"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "OK"
+     },
+     "400": {
+      "description": "Dữ liệu không hợp lệ"
+     },
+     "401": {
+      "description": "Chưa đăng nhập"
+     }
+    }
+   }
+  },
+  "/zones/{id}": {
+   "put": {
+    "tags": [
+     "Sơ đồ bãi"
+    ],
+    "summary": "Đổi loại xe của khu",
+    "parameters": [
+     {
+      "name": "id",
+      "in": "path",
+      "required": true,
+      "example": 1,
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "example": {
+        "name": "A",
+        "vehicleType": "motorbike"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "OK"
+     },
+     "400": {
+      "description": "Dữ liệu không hợp lệ"
+     },
+     "401": {
+      "description": "Chưa đăng nhập"
+     }
+    }
+   },
+   "delete": {
+    "tags": [
+     "Sơ đồ bãi"
+    ],
+    "summary": "Xoá khu không còn ô",
+    "parameters": [
+     {
+      "name": "id",
+      "in": "path",
+      "required": true,
+      "example": 1,
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "OK"
+     },
+     "400": {
+      "description": "Dữ liệu không hợp lệ"
+     },
+     "401": {
+      "description": "Chưa đăng nhập"
+     }
+    }
+   }
+  },
+  "/lot/layout": {
+   "put": {
+    "tags": [
+     "Sơ đồ bãi"
+    ],
+    "summary": "Lưu mặt bằng: '#' tường, '.' trống, '=' đường, 'I' lối vào, 'O' lối ra, chữ cái = ô của khu",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "example": {
+        "layout": [
+         "##I################O##",
+         "#==AAAAAAAAAAAAAAAA==#",
+         "#====================#",
+         "#==BBBBBBBBBBBBBBBB==#",
+         "#==BBBBBBBBBBBBBBBB==#",
+         "#====================#",
+         "#==CCCCCCCC.DDDDDDD==#",
+         "######################"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "OK"
+     },
+     "400": {
+      "description": "Dữ liệu không hợp lệ"
+     },
+     "401": {
+      "description": "Chưa đăng nhập"
+     }
+    }
+   }
+  },
+  "/lot/route": {
+   "get": {
+    "tags": [
+     "Sơ đồ bãi"
+    ],
+    "summary": "Đường từ lối vào tới ô + lời chỉ dẫn, đường từ ô ra lối ra",
+    "parameters": [
+     {
+      "name": "slot",
+      "in": "query",
+      "required": false,
+      "description": "Mã ô",
+      "example": "A-08",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "OK"
+     },
+     "400": {
+      "description": "Dữ liệu không hợp lệ"
+     },
+     "401": {
+      "description": "Chưa đăng nhập"
+     }
+    }
+   }
+  },
+  "/slots/{code}": {
+   "patch": {
+    "tags": [
+     "Sơ đồ bãi"
+    ],
+    "summary": "Gán ô cho cư dân (thẻ tháng) / bỏ gán / tạm khoá",
+    "parameters": [
+     {
+      "name": "code",
+      "in": "path",
+      "required": true,
+      "example": "A-01",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "example": {
+        "cardUid": "A1B2C3D4",
+        "active": true
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "OK"
+     },
+     "400": {
+      "description": "Dữ liệu không hợp lệ"
+     },
+     "401": {
+      "description": "Chưa đăng nhập"
+     }
+    }
+   }
+  },
+  "/stats/revenue": {
+   "get": {
+    "tags": [
+     "Doanh thu"
+    ],
+    "summary": "Doanh thu theo ngày / tháng: vé lượt + vé tháng, theo loại xe",
+    "parameters": [
+     {
+      "name": "group",
+      "in": "query",
+      "required": false,
+      "description": "day | month",
+      "example": "day",
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "name": "from",
+      "in": "query",
+      "required": false,
+      "description": "YYYY-MM-DD hoặc YYYY-MM",
+      "example": "",
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "name": "to",
+      "in": "query",
+      "required": false,
+      "description": "YYYY-MM-DD hoặc YYYY-MM",
+      "example": "",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "OK"
+     },
+     "400": {
+      "description": "Dữ liệu không hợp lệ"
+     },
+     "401": {
+      "description": "Chưa đăng nhập"
+     }
+    }
+   }
+  },
+  "/stats/ocr": {
+   "get": {
+    "tags": [
+     "Biển số"
+    ],
+    "summary": "Tốc độ + độ chính xác nhận diện biển (trung bình, p95, đọc được lần đầu, khớp lúc ra)",
+    "parameters": [
+     {
+      "name": "days",
+      "in": "query",
+      "required": false,
+      "description": "Số ngày gần nhất",
+      "example": "30",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "OK"
+     },
+     "400": {
+      "description": "Dữ liệu không hợp lệ"
+     },
+     "401": {
+      "description": "Chưa đăng nhập"
+     }
+    }
+   }
+  },
+  "/gate/whitelist": {
+   "get": {
+    "tags": [
+     "Cổng (ĐT camera)"
+    ],
+    "summary": "Thẻ tháng còn hạn để ESP32 lưu sẵn (dùng khi mất mạng)",
+    "responses": {
+     "200": {
+      "description": "OK"
+     },
+     "400": {
+      "description": "Dữ liệu không hợp lệ"
+     },
+     "401": {
+      "description": "Chưa đăng nhập"
+     }
+    }
+   }
+  },
+  "/gate/offline": {
+   "post": {
+    "tags": [
+     "Cổng (ĐT camera)"
+    ],
+    "summary": "Gửi bù lượt ra / vào ghi trên ESP32 lúc mất mạng",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "example": {
+        "events": [
+         {
+          "t": "in",
+          "uid": "A1B2C3D4",
+          "ts": 1793340000,
+          "by": "card"
+         }
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "OK"
+     },
+     "400": {
+      "description": "Dữ liệu không hợp lệ"
+     },
+     "401": {
+      "description": "Chưa đăng nhập"
+     }
+    }
+   }
+  },
+  "/guards": {
+   "get": {
+    "tags": [
+     "Bảo vệ"
+    ],
+    "summary": "Danh sách bảo vệ",
+    "responses": {
+     "200": {
+      "description": "OK"
+     },
+     "400": {
+      "description": "Dữ liệu không hợp lệ"
+     },
+     "401": {
+      "description": "Chưa đăng nhập"
+     }
+    }
+   },
+   "post": {
+    "tags": [
+     "Bảo vệ"
+    ],
+    "summary": "Thêm bảo vệ",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "example": {
+        "name": "Nguyễn Văn Tuấn",
+        "pin": "1234"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "OK"
+     },
+     "400": {
+      "description": "Dữ liệu không hợp lệ"
+     },
+     "401": {
+      "description": "Chưa đăng nhập"
+     }
+    }
+   }
+  },
+  "/guards/{id}": {
+   "patch": {
+    "tags": [
+     "Bảo vệ"
+    ],
+    "summary": "Sửa tên / PIN / ID vân tay",
+    "parameters": [
+     {
+      "name": "id",
+      "in": "path",
+      "required": true,
+      "example": 1,
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "example": {
+        "pin": "5678",
+        "fingerId": 1
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "OK"
+     },
+     "400": {
+      "description": "Dữ liệu không hợp lệ"
+     },
+     "401": {
+      "description": "Chưa đăng nhập"
+     }
+    }
+   },
+   "delete": {
+    "tags": [
+     "Bảo vệ"
+    ],
+    "summary": "Xoá bảo vệ",
+    "parameters": [
+     {
+      "name": "id",
+      "in": "path",
+      "required": true,
+      "example": 1,
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "OK"
+     },
+     "400": {
+      "description": "Dữ liệu không hợp lệ"
+     },
+     "401": {
+      "description": "Chưa đăng nhập"
+     }
+    }
+   }
+  },
+  "/shifts": {
+   "get": {
+    "tags": [
+     "Bảo vệ"
+    ],
+    "summary": "Ca trực",
+    "responses": {
+     "200": {
+      "description": "OK"
+     },
+     "400": {
+      "description": "Dữ liệu không hợp lệ"
+     },
+     "401": {
+      "description": "Chưa đăng nhập"
+     }
+    }
+   },
+   "post": {
+    "tags": [
+     "Bảo vệ"
+    ],
+    "summary": "Thêm ca",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "example": {
+        "name": "Ca sáng",
+        "startTime": "06:00",
+        "endTime": "14:00"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "OK"
+     },
+     "400": {
+      "description": "Dữ liệu không hợp lệ"
+     },
+     "401": {
+      "description": "Chưa đăng nhập"
+     }
+    }
+   }
+  },
+  "/shifts/{id}": {
+   "put": {
+    "tags": [
+     "Bảo vệ"
+    ],
+    "summary": "Sửa ca",
+    "parameters": [
+     {
+      "name": "id",
+      "in": "path",
+      "required": true,
+      "example": 1,
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "example": {
+        "name": "Ca sáng",
+        "startTime": "06:00",
+        "endTime": "14:00"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "OK"
+     },
+     "400": {
+      "description": "Dữ liệu không hợp lệ"
+     },
+     "401": {
+      "description": "Chưa đăng nhập"
+     }
+    }
+   },
+   "delete": {
+    "tags": [
+     "Bảo vệ"
+    ],
+    "summary": "Xoá ca",
+    "parameters": [
+     {
+      "name": "id",
+      "in": "path",
+      "required": true,
+      "example": 1,
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "OK"
+     },
+     "400": {
+      "description": "Dữ liệu không hợp lệ"
+     },
+     "401": {
+      "description": "Chưa đăng nhập"
+     }
+    }
+   }
+  },
+  "/attendance": {
+   "get": {
+    "tags": [
+     "Bảo vệ"
+    ],
+    "summary": "Bảng công tháng",
+    "parameters": [
+     {
+      "name": "month",
+      "in": "query",
+      "required": false,
+      "description": "YYYY-MM",
+      "example": "2026-10",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "OK"
+     },
+     "400": {
+      "description": "Dữ liệu không hợp lệ"
+     },
+     "401": {
+      "description": "Chưa đăng nhập"
+     }
+    }
+   }
+  },
+  "/me/attendance": {
+   "get": {
+    "tags": [
+     "Bảo vệ"
+    ],
+    "summary": "Bảng công của tôi",
+    "parameters": [
+     {
+      "name": "month",
+      "in": "query",
+      "required": false,
+      "description": "YYYY-MM",
+      "example": "2026-10",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "OK"
+     },
+     "400": {
+      "description": "Dữ liệu không hợp lệ"
+     },
+     "401": {
+      "description": "Chưa đăng nhập"
+     }
+    }
+   }
+  },
+  "/lot": {
+   "get": {
+    "tags": [
+     "Khách hàng"
+    ],
+    "summary": "Thông tin bãi: tên, địa chỉ, toạ độ, bảng giá, chỗ trống",
+    "security": [],
+    "responses": {
+     "200": {
+      "description": "OK"
+     },
+     "400": {
+      "description": "Dữ liệu không hợp lệ"
+     },
+     "401": {
+      "description": "Chưa đăng nhập"
+     }
+    }
+   }
+  },
+  "/me/cards": {
+   "get": {
+    "tags": [
+     "Khách hàng"
+    ],
+    "summary": "Thẻ của tôi: hạn vé, xe đang gửi, phí nếu ra bây giờ",
+    "responses": {
+     "200": {
+      "description": "OK"
+     },
+     "400": {
+      "description": "Dữ liệu không hợp lệ"
+     },
+     "401": {
+      "description": "Chưa đăng nhập"
+     }
+    }
+   }
+  },
+  "/me/cards/{uid}/lost": {
+   "post": {
+    "tags": [
+     "Khách hàng"
+    ],
+    "summary": "Báo mất thẻ: khoá ngay, cổng chặn cả vào lẫn ra",
+    "parameters": [
+     {
+      "name": "uid",
+      "in": "path",
+      "required": true,
+      "example": "A1B2C3D4",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "OK"
+     },
+     "400": {
+      "description": "Dữ liệu không hợp lệ"
+     },
+     "401": {
+      "description": "Chưa đăng nhập"
+     }
+    }
+   }
+  },
+  "/me/cards/{uid}/qr": {
+   "get": {
+    "tags": [
+     "Khách hàng"
+    ],
+    "summary": "Mã QR vé xe (ký, hết hạn 10 phút, không lộ UID)",
+    "parameters": [
+     {
+      "name": "uid",
+      "in": "path",
+      "required": true,
+      "example": "A1B2C3D4",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "OK"
+     },
+     "400": {
+      "description": "Dữ liệu không hợp lệ"
+     },
+     "401": {
+      "description": "Chưa đăng nhập"
+     }
+    }
+   }
+  },
+  "/me/sessions": {
+   "get": {
+    "tags": [
+     "Khách hàng"
+    ],
+    "summary": "Lịch sử ra vào của xe tôi",
+    "responses": {
+     "200": {
+      "description": "OK"
+     },
+     "400": {
+      "description": "Dữ liệu không hợp lệ"
+     },
+     "401": {
+      "description": "Chưa đăng nhập"
+     }
+    }
+   }
+  },
+  "/me/plates/url": {
+   "get": {
+    "tags": [
+     "Khách hàng"
+    ],
+    "summary": "Ảnh biển số lúc vào/ra của xe tôi",
+    "parameters": [
+     {
+      "name": "path",
+      "in": "query",
+      "required": false,
+      "description": "Đường dẫn ảnh",
+      "example": "in/2026-10-30/1761800000000_A1B2C3D4.jpg",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "OK"
+     },
+     "400": {
+      "description": "Dữ liệu không hợp lệ"
+     },
+     "401": {
+      "description": "Chưa đăng nhập"
+     }
+    }
+   }
+  },
+  "/me/requests": {
+   "get": {
+    "tags": [
+     "Khách hàng"
+    ],
+    "summary": "Đơn vé tháng của tôi",
+    "responses": {
+     "200": {
+      "description": "OK"
+     },
+     "400": {
+      "description": "Dữ liệu không hợp lệ"
+     },
+     "401": {
+      "description": "Chưa đăng nhập"
+     }
+    }
+   },
+   "post": {
+    "tags": [
+     "Khách hàng"
+    ],
+    "summary": "Gửi đơn đăng ký / gia hạn vé tháng",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "example": {
+        "plate": "59X1-123.45",
+        "ownerName": "Nguyễn An",
+        "months": 1,
+        "note": "Xe Vision trắng",
+        "cardUid": null
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "OK"
+     },
+     "400": {
+      "description": "Dữ liệu không hợp lệ"
+     },
+     "401": {
+      "description": "Chưa đăng nhập"
+     }
+    }
+   }
+  },
+  "/me/requests/{id}": {
+   "patch": {
+    "tags": [
+     "Khách hàng"
+    ],
+    "summary": "Sửa đơn đang chờ",
+    "parameters": [
+     {
+      "name": "id",
+      "in": "path",
+      "required": true,
+      "example": 1,
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "example": {
+        "plate": "59X112345",
+        "ownerName": "Nguyễn An",
+        "months": 3
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "OK"
+     },
+     "400": {
+      "description": "Dữ liệu không hợp lệ"
+     },
+     "401": {
+      "description": "Chưa đăng nhập"
+     }
+    }
+   },
+   "delete": {
+    "tags": [
+     "Khách hàng"
+    ],
+    "summary": "Huỷ đơn đang chờ",
+    "parameters": [
+     {
+      "name": "id",
+      "in": "path",
+      "required": true,
+      "example": 1,
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "OK"
+     },
+     "400": {
+      "description": "Dữ liệu không hợp lệ"
+     },
+     "401": {
+      "description": "Chưa đăng nhập"
+     }
+    }
+   }
+  },
+  "/requests": {
+   "get": {
+    "tags": [
+     "Bãi xe"
+    ],
+    "summary": "Đơn vé tháng của khách",
+    "parameters": [
+     {
+      "name": "status",
+      "in": "query",
+      "required": false,
+      "description": "pending | approved | rejected",
+      "example": "pending",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "OK"
+     },
+     "400": {
+      "description": "Dữ liệu không hợp lệ"
+     },
+     "401": {
+      "description": "Chưa đăng nhập"
+     }
+    }
+   }
+  },
+  "/requests/{id}/approve": {
+   "post": {
+    "tags": [
+     "Bãi xe"
+    ],
+    "summary": "Duyệt đơn: gia hạn hoặc gán thẻ RFID mới",
+    "parameters": [
+     {
+      "name": "id",
+      "in": "path",
+      "required": true,
+      "example": 1,
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "example": {
+        "cardUid": "A1B2C3D4",
+        "reply": "Đã cấp thẻ, nhận tại quầy"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "OK"
+     },
+     "400": {
+      "description": "Dữ liệu không hợp lệ"
+     },
+     "401": {
+      "description": "Chưa đăng nhập"
+     }
+    }
+   }
+  },
+  "/requests/{id}/reject": {
+   "post": {
+    "tags": [
+     "Bãi xe"
+    ],
+    "summary": "Từ chối đơn (ghi lý do)",
+    "parameters": [
+     {
+      "name": "id",
+      "in": "path",
+      "required": true,
+      "example": 1,
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "example": {
+        "reply": "Bãi đã hết chỗ vé tháng"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "OK"
+     },
+     "400": {
+      "description": "Dữ liệu không hợp lệ"
+     },
+     "401": {
+      "description": "Chưa đăng nhập"
+     }
+    }
+   }
+  },
+  "/sessions/by-ticket": {
+   "get": {
+    "tags": [
+     "Bãi xe"
+    ],
+    "summary": "Quét QR vé của khách -> xe đang gửi",
+    "parameters": [
+     {
+      "name": "qr",
+      "in": "query",
+      "required": false,
+      "description": "Chuỗi mã QR",
+      "example": "",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "OK"
+     },
+     "400": {
+      "description": "Dữ liệu không hợp lệ"
+     },
+     "401": {
+      "description": "Chưa đăng nhập"
+     }
+    }
+   }
+  },
+  "/admin/users": {
+   "get": {
+    "tags": [
+     "Quản trị"
+    ],
+    "summary": "Tài khoản",
+    "parameters": [
+     {
+      "name": "q",
+      "in": "query",
+      "required": false,
+      "description": "Tìm",
+      "example": "",
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "name": "role",
+      "in": "query",
+      "required": false,
+      "description": "admin | manager | guard | customer",
+      "example": "",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "OK"
+     },
+     "400": {
+      "description": "Dữ liệu không hợp lệ"
+     },
+     "401": {
+      "description": "Chưa đăng nhập"
+     }
+    }
+   },
+   "post": {
+    "tags": [
+     "Quản trị"
+    ],
+    "summary": "Tạo tài khoản đã kích hoạt",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "example": {
+        "email": "bv@gmail.com",
+        "username": "baove2",
+        "fullName": "Lê B",
+        "password": "matkhau1",
+        "role": "guard",
+        "guardId": null
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "OK"
+     },
+     "400": {
+      "description": "Dữ liệu không hợp lệ"
+     },
+     "401": {
+      "description": "Chưa đăng nhập"
+     }
+    }
+   }
+  },
+  "/admin/users/{id}": {
+   "patch": {
+    "tags": [
+     "Quản trị"
+    ],
+    "summary": "Đổi vai trò / khoá / gắn bảo vệ",
+    "parameters": [
+     {
+      "name": "id",
+      "in": "path",
+      "required": true,
+      "example": 2,
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "example": {
+        "role": "manager",
+        "active": true,
+        "guardId": null
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "OK"
+     },
+     "400": {
+      "description": "Dữ liệu không hợp lệ"
+     },
+     "401": {
+      "description": "Chưa đăng nhập"
+     }
+    }
+   },
+   "delete": {
+    "tags": [
+     "Quản trị"
+    ],
+    "summary": "Xoá tài khoản",
+    "parameters": [
+     {
+      "name": "id",
+      "in": "path",
+      "required": true,
+      "example": 2,
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "OK"
+     },
+     "400": {
+      "description": "Dữ liệu không hợp lệ"
+     },
+     "401": {
+      "description": "Chưa đăng nhập"
+     }
+    }
+   }
+  }
+ }
+}
