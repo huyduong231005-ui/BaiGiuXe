@@ -9,7 +9,7 @@ ESP32 (WiFi bãi xe) --MQTT bgx/evt--> EMQX Cloud --> ĐT camera của cổng đ
 App quản lý / khách hàng --HTTPS--> REST API (Render) --> MongoDB Atlas
 ```
 
-REST API: https://baigiuxe.onrender.com (danh sách API, số chỗ trống trực tiếp) · thử từng API: https://baigiuxe.onrender.com/docs
+REST API: https://bai-giu-xe-api.onrender.com (danh sách API, số chỗ trống trực tiếp) · thử từng API: https://bai-giu-xe-api.onrender.com/docs
 
 | Thư mục | Nội dung |
 |---|---|
@@ -55,7 +55,7 @@ ESP32 và 2 ĐT camera nói chuyện qua broker MQTT, nên ĐT dùng WiFi hay 4G
 ```bash
 cd app
 flutter test
-# Sửa app/dart_defines.json: MQTT_HOST, MQTT_USER, MQTT_PASS (API_URL mặc định baigiuxe.onrender.com)
+# Sửa app/dart_defines.json: MQTT_HOST, MQTT_USER, MQTT_PASS (API_URL mặc định bai-giu-xe-api.onrender.com)
 flutter build apk --release --dart-define-from-file=dart_defines.json
 ```
 

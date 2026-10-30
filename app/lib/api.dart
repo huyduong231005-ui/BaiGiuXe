@@ -6,7 +6,7 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// REST API đã deploy (thư mục backend/). Đổi khi build: --dart-define=API_URL=https://...
-const apiUrl = String.fromEnvironment('API_URL', defaultValue: 'https://baigiuxe.onrender.com');
+const apiUrl = String.fromEnvironment('API_URL', defaultValue: 'https://bai-giu-xe-api.onrender.com');
 
 /// Web client ID của Google Cloud (trùng GOOGLE_CLIENT_ID ở backend). Không phải bí mật.
 const googleServerClientId = String.fromEnvironment(
