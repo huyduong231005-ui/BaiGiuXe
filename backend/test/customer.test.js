@@ -1,11 +1,12 @@
 import { after, before, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { loginAs, startApp } from './helpers.js';
+import { ago, loginAs, startApp } from './helpers.js';
+import { ymd } from '../src/parking.js';
 import { decideEntry, decideExit, extendUntil, monthlyValid } from '../src/rules.js';
 
 let ctx, manager, khach, khac;
 before(async () => {
-  ctx = await startApp({ signImage: async (p) => `https://signed/${p}` });
+  ctx = await startApp();
   manager = await loginAs(ctx, 'manager', 'quanly');
   khach = await loginAs(ctx, 'customer', 'khach');
   khac = await loginAs(ctx, 'customer', 'khac');
@@ -61,10 +62,10 @@ test('khách gửi đơn vé tháng -> sửa -> quản lý duyệt, gán thẻ -
 });
 
 test('gia hạn thẻ đang dùng: hạn mới nối tiếp hạn cũ; thẻ của khách khác thì không gán được', async () => {
-  await ctx.db.query("update cards set valid_until = current_date + 10 where uid = 'A1B2C3D4'");
+  await ctx.db.Card.updateOne({ uid: 'A1B2C3D4' }, { valid_until: ymd(new Date(Date.now() + 10 * 864e5)) });
   const r = await ctx.call('POST', '/me/requests', { token: khach, body: { plate: '59X112345', ownerName: 'An', months: 1, cardUid: 'A1B2C3D4' } });
   assert.equal((await ctx.call('POST', '/me/requests', { token: khac, body: { plate: '59X112345', ownerName: 'X', months: 1, cardUid: 'A1B2C3D4' } })).status, 400);
-  const before = (await ctx.db.query("select valid_until from cards where uid = 'A1B2C3D4'")).rows[0].valid_until;
+  const before = (await ctx.db.Card.findOne({ uid: 'A1B2C3D4' }).lean()).valid_until;
   const ok = await ctx.call('POST', `/requests/${r.body.id}/approve`, { token: manager, body: {} });
   assert.equal(ok.body.card.valid_until, extendUntil(before, 1));
 
@@ -76,8 +77,8 @@ test('gia hạn thẻ đang dùng: hạn mới nối tiếp hạn cũ; thẻ c�
 });
 
 test('báo mất thẻ, mã QR vé, lịch sử và ảnh xe của chính mình', async () => {
-  await ctx.db.query(
-    "insert into sessions (card_uid, plate_in, img_in, time_in) values ('A1B2C3D4', '59X112345', 'in/2026-10-30/1761800000000_A1B2C3D4.jpg', now() - interval '2 hours')");
+  await ctx.db.insert(ctx.db.Session,
+    { card_uid: 'A1B2C3D4', plate_in: '59X112345', img_in: 'in/2026-10-30/1761800000000_A1B2C3D4.jpg', time_in: ago(2) });
   const mine = (await ctx.call('GET', '/me/cards', { token: khach })).body[0];
   assert.deepEqual([mine.parked_plate, mine.fee_now], ['59X112345', 0]); // vé tháng còn hạn: miễn phí
 

@@ -1,9 +1,10 @@
 // Quản trị tài khoản API: xem, đổi vai trò, khoá, gắn với hồ sơ bảo vệ, xoá.
 import { Router } from 'express';
 import bcrypt from 'bcryptjs';
-import { EMAIL_RE, HttpError, MIN_PASSWORD, publicUser, ROLES, str, USERNAME_RE } from './auth.js';
+import { EMAIL_RE, HttpError, MIN_PASSWORD, publicUser, ROLES, setUser, str, USERNAME_RE } from './auth.js';
+import { Card, contains, insert, Otp, row, TicketRequest, User } from './db.js';
 
-export function adminRouter({ db }) {
+export function adminRouter() {
   const router = Router();
 
   // Admin tạo sẵn tài khoản (quản lý, bảo vệ, khách vé tháng) đã kích hoạt, không cần OTP đăng ký.
@@ -18,25 +19,24 @@ export function adminRouter({ db }) {
     if (password.length < MIN_PASSWORD) throw new HttpError(400, `Mật khẩu tối thiểu ${MIN_PASSWORD} ký tự`);
     if (!ROLES.includes(role)) throw new HttpError(400, `Vai trò là một trong: ${ROLES.join(', ')}`);
     const guardId = Number.isInteger(b.guardId) ? b.guardId : null;
-    const { rows } = await db.query(
-      `insert into app_users (email, username, full_name, password_hash, role, guard_id, active)
-       values ($1, $2, $3, $4, $5, $6, true) returning *`,
-      [email, username, str(b.fullName), await bcrypt.hash(password, 10), role, guardId]);
-    res.status(201).json(publicUser(rows[0]));
+    const user = await insert(User, {
+      email, username, full_name: str(b.fullName), password_hash: await bcrypt.hash(password, 10), role,
+      guard_id: guardId, active: true,
+    });
+    res.status(201).json(publicUser(user));
   });
 
   router.get('/users', async (req, res) => {
-    const q = `%${str(req.query.q).toLowerCase()}%`;
+    const q = contains(str(req.query.q));
     const role = str(req.query.role);
-    const { rows } = await db.query(
-      `select * from app_users where (username like $1 or lower(email) like $1 or lower(full_name) like $1)
-       and ($2 = '' or role = $2) order by id`, [q, role]);
-    res.json(rows.map(publicUser));
+    const users = await User.find({ $or: [{ username: q }, { email: q }, { full_name: q }], ...(role ? { role } : {}) })
+      .sort({ _id: 1 }).lean();
+    res.json(users.map((u) => publicUser(row(u))));
   });
 
   router.patch('/users/:id', async (req, res) => {
     const id = Number(req.params.id) || 0;
-    const [user] = (await db.query('select * from app_users where id = $1', [id])).rows;
+    const user = row(await User.findById(id).lean());
     if (!user) throw new HttpError(404, 'Không có tài khoản này');
     const b = req.body ?? {};
     const role = b.role ?? user.role;
@@ -46,18 +46,23 @@ export function adminRouter({ db }) {
     }
     const guardId = 'guardId' in b ? b.guardId : user.guard_id;
     if (guardId !== null && !Number.isInteger(guardId)) throw new HttpError(400, 'guardId là số hoặc null');
-    const { rows } = await db.query(
-      `update app_users set role = $2, active = $3, guard_id = $4, full_name = $5 where id = $1 returning *`,
-      [id, role, typeof b.active === 'boolean' ? b.active : user.active, guardId,
-        b.fullName !== undefined ? str(b.fullName) : user.full_name]);
-    res.json(publicUser(rows[0]));
+    res.json(publicUser(await setUser(id, {
+      role, active: typeof b.active === 'boolean' ? b.active : user.active, guard_id: guardId,
+      full_name: b.fullName !== undefined ? str(b.fullName) : user.full_name,
+    })));
   });
 
+  // Như khoá ngoại cũ: xoá mã OTP và đơn vé tháng của tài khoản, thẻ / đơn đã duyệt bỏ liên kết.
   router.delete('/users/:id', async (req, res) => {
     const id = Number(req.params.id) || 0;
     if (id === req.user.id) throw new HttpError(400, 'Không tự xoá tài khoản đang dùng');
-    const { rowCount } = await db.query('delete from app_users where id = $1', [id]);
-    if (!rowCount) throw new HttpError(404, 'Không có tài khoản này');
+    if (!(await User.findByIdAndDelete(id))) throw new HttpError(404, 'Không có tài khoản này');
+    await Promise.all([
+      Otp.deleteMany({ user_id: id }),
+      TicketRequest.deleteMany({ user_id: id }),
+      TicketRequest.updateMany({ handled_by: id }, { handled_by: null }),
+      Card.updateMany({ user_id: id }, { user_id: null }),
+    ]);
     res.status(204).end();
   });
   return router;

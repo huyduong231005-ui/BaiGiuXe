@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { Router } from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import { insert, Otp, row, User } from './db.js';
 
 const OTP_TTL_MS = 5 * 60 * 1000;
 const OTP_RESEND_MS = 30 * 1000; // chống spam email / đốt hạn mức 300 mail/ngày của Brevo
@@ -36,24 +37,18 @@ export const signToken = (user, jwtSecret) =>
 
 /**
  * Kiểm token và nạp người dùng từ DB (đổi vai trò / khoá có hiệu lực ngay), kiểm vai trò nếu có truyền.
- * Ngoài JWT của API còn nhận token Supabase của điện thoại camera (vai trò staff) và coi là quản lý,
- * để ĐT camera đang đăng nhập Supabase gọi được API mà không phải đăng nhập lần nữa.
  */
-export function requireAuth({ db, jwtSecret, verifySupabase }, ...roles) {
+export function requireAuth({ jwtSecret }, ...roles) {
   return async (req, _res, next) => {
     const token = req.get('authorization')?.replace(/^Bearer /, '') ?? '';
-    let user;
+    let sub;
     try {
-      const { sub } = jwt.verify(token, jwtSecret);
-      [user] = (await db.query('select * from app_users where id = $1', [sub])).rows;
-      if (!user?.active) throw new HttpError(401, 'Tài khoản không còn hoạt động');
-    } catch (err) {
-      if (err instanceof HttpError) throw err;
-      const staff = token && (await verifySupabase(token));
-      if (!staff) throw new HttpError(401, 'Phiên đăng nhập không hợp lệ hoặc đã hết hạn');
-      user = { id: null, username: staff.email, email: staff.email, full_name: 'Thiết bị camera', role: 'manager',
-        guard_id: null, active: true, device: true };
+      ({ sub } = jwt.verify(token, jwtSecret));
+    } catch {
+      throw new HttpError(401, 'Phiên đăng nhập không hợp lệ hoặc đã hết hạn');
     }
+    const user = row(await User.findById(Number(sub) || 0).lean());
+    if (!user?.active) throw new HttpError(401, 'Tài khoản không còn hoạt động');
     if (roles.length && !roles.includes(user.role)) throw new HttpError(403, 'Bạn không có quyền làm việc này');
     req.user = user;
     next();
@@ -61,10 +56,9 @@ export function requireAuth({ db, jwtSecret, verifySupabase }, ...roles) {
 }
 
 /** PATCH /me: tự đổi họ tên và mật khẩu (phải nhập đúng mật khẩu hiện tại). */
-export function updateProfile(db) {
+export function updateProfile() {
   return async (req, res) => {
     const { user } = req;
-    if (!user.id) throw new HttpError(400, 'Thiết bị camera không có hồ sơ để sửa');
     let { full_name: fullName, password_hash: hash } = user;
     if (req.body?.fullName !== undefined) {
       fullName = str(req.body.fullName);
@@ -79,26 +73,28 @@ export function updateProfile(db) {
       }
       hash = await bcrypt.hash(newPassword, 10);
     }
-    const { rows } = await db.query(
-      'update app_users set full_name = $2, password_hash = $3 where id = $1 returning *', [user.id, fullName, hash]);
-    res.json(publicUser(rows[0]));
+    res.json(publicUser(await setUser(user.id, { full_name: fullName, password_hash: hash })));
   };
 }
 
-export function authRouter({ db, sendMail, verifyGoogle, jwtSecret }) {
+/** Sửa tài khoản, trả về dòng mới (null nếu không có). */
+export const setUser = async (id, changes) =>
+  row(await User.findByIdAndUpdate(id, changes, { new: true }).lean());
+
+const findUser = async (filter) => row(await User.findOne(filter).lean());
+
+export function authRouter({ sendMail, verifyGoogle, jwtSecret }) {
   const router = Router();
   const session = (user) => ({ token: signToken(user, jwtSecret), user: publicUser(user) });
-  const one = async (sql, params) => (await db.query(sql, params)).rows[0];
+  const otpOf = (user, purpose) => ({ user_id: user.id, purpose });
 
   async function issueOtp(user, purpose) {
-    const last = await one('select expires_at from otps where user_id = $1 and purpose = $2', [user.id, purpose]);
+    const last = await Otp.findOne(otpOf(user, purpose)).lean();
     const waitMs = last ? new Date(last.expires_at) - OTP_TTL_MS + OTP_RESEND_MS - Date.now() : 0;
     if (waitMs > 0) throw new HttpError(429, `Vui lòng đợi ${Math.ceil(waitMs / 1000)} giây rồi gửi lại mã`);
     const code = crypto.randomInt(0, 1_000_000).toString().padStart(6, '0');
-    await db.query(
-      `insert into otps (user_id, purpose, code_hash, expires_at) values ($1, $2, $3, $4)
-       on conflict (user_id, purpose) do update set code_hash = $3, attempts = 0, expires_at = $4`,
-      [user.id, purpose, sha256(code), new Date(Date.now() + OTP_TTL_MS)]);
+    await Otp.updateOne(otpOf(user, purpose),
+      { code_hash: sha256(code), attempts: 0, expires_at: new Date(Date.now() + OTP_TTL_MS) }, { upsert: true });
     try {
       await sendMail(user.email, code, purpose);
     } catch (err) {
@@ -108,17 +104,17 @@ export function authRouter({ db, sendMail, verifyGoogle, jwtSecret }) {
   }
 
   async function consumeOtp(user, purpose, code) {
-    const otp = await one('select * from otps where user_id = $1 and purpose = $2', [user.id, purpose]);
+    const otp = await Otp.findOne(otpOf(user, purpose)).lean();
     if (!otp || new Date(otp.expires_at) < new Date()) throw new HttpError(400, 'Mã OTP đã hết hạn, hãy gửi lại mã mới');
     if (otp.code_hash !== sha256(str(code))) {
       if (otp.attempts + 1 >= OTP_MAX_ATTEMPTS) {
-        await db.query('delete from otps where user_id = $1 and purpose = $2', [user.id, purpose]);
+        await Otp.deleteOne(otpOf(user, purpose));
         throw new HttpError(400, 'Nhập sai quá nhiều lần, hãy gửi lại mã mới');
       }
-      await db.query('update otps set attempts = attempts + 1 where user_id = $1 and purpose = $2', [user.id, purpose]);
+      await Otp.updateOne(otpOf(user, purpose), { $inc: { attempts: 1 } });
       throw new HttpError(400, 'Mã OTP không đúng');
     }
-    await db.query('delete from otps where user_id = $1 and purpose = $2', [user.id, purpose]);
+    await Otp.deleteOne(otpOf(user, purpose));
   }
 
   // Tài khoản tự đăng ký là khách hàng (chủ vé tháng); quản lý / bảo vệ do admin cấp quyền.
@@ -131,29 +127,27 @@ export function authRouter({ db, sendMail, verifyGoogle, jwtSecret }) {
     if (!USERNAME_RE.test(username)) throw new HttpError(400, 'Tên đăng nhập 3–30 ký tự: chữ thường, số, dấu _ hoặc .');
     if (password.length < MIN_PASSWORD) throw new HttpError(400, `Mật khẩu tối thiểu ${MIN_PASSWORD} ký tự`);
 
-    const existing = await one('select * from app_users where email = $1 or username = $2', [email, username]);
+    const existing = await findUser({ $or: [{ email }, { username }] });
     // Đăng ký lại khi chưa xác minh (VD: mất mã OTP) thì cho cập nhật và gửi mã mới.
     const isRetry = existing && !existing.active && existing.email === email && existing.username === username;
     if (existing && !isRetry) throw new HttpError(409, 'Tên đăng nhập hoặc email đã được dùng');
     const hash = await bcrypt.hash(password, 10);
     const user = isRetry
-      ? await one('update app_users set full_name = $2, password_hash = $3 where id = $1 returning *',
-        [existing.id, fullName, hash])
-      : await one('insert into app_users (email, username, full_name, password_hash) values ($1, $2, $3, $4) returning *',
-        [email, username, fullName, hash]);
+      ? await setUser(existing.id, { full_name: fullName, password_hash: hash })
+      : await insert(User, { email, username, full_name: fullName, password_hash: hash });
     await issueOtp(user, 'register');
     res.status(201).json({ message: 'Đã gửi mã OTP tới email', email: maskEmail(email) });
   });
 
   router.post('/register/verify', async (req, res) => {
-    const user = await one('select * from app_users where email = $1', [str(req.body?.email).toLowerCase()]);
+    const user = await findUser({ email: str(req.body?.email).toLowerCase() });
     if (!user || user.active) throw new HttpError(400, 'Không có tài khoản nào đang chờ xác minh với email này');
     await consumeOtp(user, 'register', req.body?.code);
-    res.json(session(await one('update app_users set active = true where id = $1 returning *', [user.id])));
+    res.json(session(await setUser(user.id, { active: true })));
   });
 
   router.post('/login', async (req, res) => {
-    const user = await one('select * from app_users where username = $1', [str(req.body?.username).toLowerCase()]);
+    const user = await findUser({ username: str(req.body?.username).toLowerCase() });
     const ok = user?.password_hash && (await bcrypt.compare(pass(req.body?.password), user.password_hash));
     if (!ok) throw new HttpError(401, 'Sai tên đăng nhập hoặc mật khẩu');
     if (!user.active) throw new HttpError(403, 'Tài khoản chưa xác minh email');
@@ -162,7 +156,7 @@ export function authRouter({ db, sendMail, verifyGoogle, jwtSecret }) {
   });
 
   router.post('/login/verify', async (req, res) => {
-    const user = await one('select * from app_users where username = $1', [str(req.body?.username).toLowerCase()]);
+    const user = await findUser({ username: str(req.body?.username).toLowerCase() });
     if (!user?.active) throw new HttpError(400, 'Tài khoản không hợp lệ');
     await consumeOtp(user, 'login', req.body?.code);
     res.json(session(user));
@@ -178,17 +172,14 @@ export function authRouter({ db, sendMail, verifyGoogle, jwtSecret }) {
     }
     if (!payload?.email_verified) throw new HttpError(400, 'Email Google chưa được xác minh');
     const email = payload.email.toLowerCase();
-    let user = await one('select * from app_users where google_id = $1 or email = $2', [payload.sub, email]);
+    let user = await findUser({ $or: [{ google_id: payload.sub }, { email }] });
     if (!user) {
       const base = email.split('@')[0].toLowerCase().replace(/[^a-z0-9_.]/g, '').slice(0, 24).padEnd(3, '0');
-      const taken = await one('select 1 from app_users where username = $1', [base]);
-      user = await one('insert into app_users (email, username) values ($1, $2) returning *',
-        [email, taken ? `${base}_${crypto.randomInt(1000, 10000)}` : base]);
+      const taken = await User.exists({ username: base });
+      user = await insert(User, { email, username: taken ? `${base}_${crypto.randomInt(1000, 10000)}` : base });
     }
     // Google đã xác minh email nên kích hoạt luôn
-    user = await one(
-      `update app_users set google_id = $2, active = true, full_name = coalesce(nullif(full_name, ''), $3)
-       where id = $1 returning *`, [user.id, payload.sub, payload.name ?? '']);
+    user = await setUser(user.id, { google_id: payload.sub, active: true, full_name: user.full_name || payload.name || '' });
     res.json(session(user));
   });
 

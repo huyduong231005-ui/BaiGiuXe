@@ -1,54 +1,23 @@
-// Dựng CSDL giống Supabase trong bộ nhớ (PGlite) rồi chạy nguyên các migration của repo.
-import { readdirSync, readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { PGlite } from '@electric-sql/pglite';
-import { pgcrypto } from '@electric-sql/pglite/contrib/pgcrypto';
+// MongoDB trong bộ nhớ (mongodb-memory-server) cho từng file test; mail và Google được giả lập.
+import mongoose from 'mongoose';
+import { MongoMemoryServer } from 'mongodb-memory-server';
 import { createApp } from '../src/app.js';
+import * as db from '../src/db.js';
 
 process.env.TZ = 'Asia/Ho_Chi_Minh';
-const MIGRATIONS = fileURLToPath(new URL('../../supabase/migrations/', import.meta.url));
-
-// Những gì Supabase có sẵn mà migration dùng tới.
-const SUPABASE_STUBS = `
-  create schema extensions;
-  create schema auth;
-  create function auth.jwt() returns jsonb language sql stable as $$ select null::jsonb $$;
-  create schema storage;
-  create table storage.buckets (id text primary key, name text, public boolean);
-  create table storage.objects (bucket_id text);
-  alter table storage.objects enable row level security;
-  create role anon;
-  create role authenticated;
-  create publication supabase_realtime;
-`;
-
-/** PGlite bọc lại cho giống pg.Pool: query() trả { rows, rowCount }. */
-export async function createDb() {
-  // date -> chuỗi 'YYYY-MM-DD' giống server.js
-  const pg = await PGlite.create({ extensions: { pgcrypto }, parsers: { 1082: (v) => v } });
-  await pg.exec(SUPABASE_STUBS);
-  for (const f of readdirSync(MIGRATIONS).sort()) await pg.exec(readFileSync(MIGRATIONS + f, 'utf8'));
-  return {
-    query: async (sql, params) => {
-      const r = await pg.query(sql, params);
-      return { rows: r.rows, rowCount: r.affectedRows ?? r.rows.length };
-    },
-    close: () => pg.close(),
-  };
-}
 
 export const JWT_SECRET = 'test-secret';
 
-/** App + server thật trên cổng ngẫu nhiên; mail và Google được giả lập. */
+/** App + server thật trên cổng ngẫu nhiên. ctx.db là các model trong src/db.js để dựng dữ liệu. */
 export async function startApp(overrides = {}) {
-  const db = await createDb();
+  const mongo = await MongoMemoryServer.create();
+  await mongoose.connect(mongo.getUri());
+  await db.initDb();
   const mails = [];
   const app = createApp({
-    db,
     jwtSecret: JWT_SECRET,
     sendMail: async (to, code, purpose) => mails.push({ to, code, purpose }),
     verifyGoogle: async () => { throw new Error('không dùng'); },
-    verifySupabase: async () => null,
     plateToken: 'plate-token',
     ...overrides,
   });
@@ -70,7 +39,8 @@ export async function startApp(overrides = {}) {
   };
   const close = async () => {
     await new Promise((r) => server.close(r));
-    await db.close();
+    await mongoose.disconnect();
+    await mongo.stop();
   };
   return { db, mails, call, close, base };
 }
@@ -81,6 +51,9 @@ export async function loginAs(ctx, role, username = role) {
   await ctx.call('POST', '/auth/register', { body: { email, username, password: 'matkhau1' } });
   const reg = ctx.mails.findLast((m) => m.to === email);
   const { body } = await ctx.call('POST', '/auth/register/verify', { body: { email, code: reg.code } });
-  if (role !== 'customer') await ctx.db.query('update app_users set role = $1 where username = $2', [role, username]);
+  if (role !== 'customer') await ctx.db.User.updateOne({ username }, { role });
   return body.token;
 }
+
+const H = 3600e3;
+export const ago = (h) => new Date(Date.now() - h * H);

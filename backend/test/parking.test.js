@@ -1,6 +1,6 @@
 import { after, before, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { loginAs, startApp } from './helpers.js';
+import { ago, loginAs, startApp } from './helpers.js';
 
 let ctx, token;
 before(async () => {
@@ -8,8 +8,6 @@ before(async () => {
   token = await loginAs(ctx, 'manager', 'quanly');
 });
 after(() => ctx.close());
-
-const ago = (h) => new Date(Date.now() - h * 3600e3);
 
 test('thẻ: thêm, chuẩn hoá biển, vé tháng bắt buộc biển, sửa, tìm, không xoá được thẻ đã có lịch sử', async () => {
   const bad = await ctx.call('POST', '/cards', { token, body: { uid: 'A1B2C3D4', kind: 'monthly' } });
@@ -25,16 +23,15 @@ test('thẻ: thêm, chuẩn hoá biển, vé tháng bắt buộc biển, sửa, 
   assert.deepEqual([p.body.active, p.body.kind], [false, 'monthly']);
   assert.equal((await ctx.call('GET', '/cards?q=an', { token })).body.length, 1);
 
-  await ctx.db.query("insert into sessions (card_uid, plate_in) values ('A1B2C3D4', '59X112345')");
+  await ctx.db.insert(ctx.db.Session, { card_uid: 'A1B2C3D4', plate_in: '59X112345' });
   const del = await ctx.call('DELETE', '/cards/A1B2C3D4', { token });
   assert.equal(del.status, 409);
 });
 
 test('số chỗ trống công khai, lịch sử theo ngày + doanh thu, phí tạm tính', async () => {
   await ctx.call('POST', '/cards', { token, body: { uid: '11111111' } });
-  await ctx.db.query(
-    "insert into sessions (card_uid, plate_in, time_in, time_out, fee) values ('11111111', '30A99999', $1, $2, 3000)",
-    [ago(3), ago(1)]);
+  await ctx.db.insert(ctx.db.Session,
+    { card_uid: '11111111', plate_in: '30A99999', time_in: ago(3), time_out: ago(1), fee: 3000, parked: false });
   const st = await ctx.call('GET', '/status');
   assert.deepEqual(st.body, { capacity: 50, occupied: 1, free: 49 });
 
@@ -53,8 +50,7 @@ test('số chỗ trống công khai, lịch sử theo ngày + doanh thu, phí t�
 
 test('cho xe ra khi mất thẻ: đóng lượt, tính phí, tạo lệnh mở cổng', async () => {
   await ctx.call('POST', '/cards', { token, body: { uid: '22222222' } });
-  const { rows: [s] } = await ctx.db.query(
-    "insert into sessions (card_uid, plate_in, time_in) values ('22222222', '51F00001', $1) returning id", [ago(2)]);
+  const s = await ctx.db.insert(ctx.db.Session, { card_uid: '22222222', plate_in: '51F00001', time_in: ago(2) });
   assert.equal((await ctx.call('GET', `/sessions/${s.id}/fee`, { token })).body.fee, 3000);
   const r = await ctx.call('POST', `/sessions/${s.id}/release`, { token });
   assert.deepEqual([r.status, r.body.fee], [200, 3000]);
@@ -67,7 +63,7 @@ test('mở cổng từ API và thẻ vừa quẹt cho màn thêm thẻ', async (
   assert.equal((await ctx.call('POST', '/gate/open', { token })).status, 201);
   const since = new Date().toISOString();
   assert.equal((await ctx.call('GET', `/scans/latest?since=${since}`, { token })).body, null);
-  await ctx.db.query("insert into gate_events (gate, kind, uid, status) values ('in', 'scan', '99AABBCC', 'denied')");
+  await ctx.db.insert(ctx.db.GateEvent, { gate: 'in', kind: 'scan', uid: '99AABBCC', status: 'denied' });
   const scan = await ctx.call('GET', `/scans/latest?since=${since}`, { token });
   assert.deepEqual([scan.body.uid, scan.body.registered], ['99AABBCC', false]);
 });

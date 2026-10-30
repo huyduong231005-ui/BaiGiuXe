@@ -14,7 +14,6 @@ before(async () => {
         { plate: '30a99999', score: 0.98, candidates: [{ plate: '30a99999' }, { plate: '30a99998' }] },
       ] });
     },
-    signImage: async (path) => `https://signed.example/${path}?token=t`,
   });
   token = await loginAs(ctx, 'manager', 'quanly');
 });
@@ -38,8 +37,15 @@ test('nhận diện biển: gửi ảnh qua API, token Plate Recognizer chỉ n�
   assert.equal((await ctx.call('POST', '/plates/recognize', { raw: 'x', headers: { 'content-type': 'image/jpeg' } })).status, 401);
 });
 
-test('ảnh biển số: chỉ ký đúng dạng đường dẫn của ĐT camera', async () => {
-  const ok = await ctx.call('GET', '/plates/url?path=in/2026-10-30/1761800000000_A1B2C3D4.jpg', { token });
-  assert.equal(ok.body.url, 'https://signed.example/in/2026-10-30/1761800000000_A1B2C3D4.jpg?token=t');
+test('ảnh biển số: ĐT camera tải lên, link ký có hạn xem được không cần đăng nhập, sửa link thì bị chặn', async () => {
+  const path = 'in/2026-10-30/1761800000000_A1B2C3D4.jpg';
+  const jpg = new Uint8Array([0xff, 0xd8, 0xff, 0xd9]);
+  const up = await ctx.call('PUT', `/gate/images?path=${path}`, { token, raw: jpg, headers: { 'content-type': 'image/jpeg' } });
+  assert.equal(up.status, 204);
+  const ok = await ctx.call('GET', `/plates/url?path=${path}`, { token });
+  const res = await fetch(ok.body.url);
+  assert.deepEqual([res.status, res.headers.get('content-type')], [200, 'image/jpeg']);
+  assert.deepEqual(new Uint8Array(await res.arrayBuffer()), jpg);
+  assert.equal((await fetch(ok.body.url.replace('1761800000000', '1761800000001'))).status, 403);
   assert.equal((await ctx.call('GET', '/plates/url?path=../secret', { token })).status, 400);
 });

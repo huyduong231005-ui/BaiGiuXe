@@ -2,6 +2,9 @@
 import { Router } from 'express';
 import ExcelJS from 'exceljs';
 import { HttpError, str } from './auth.js';
+import { Session } from './db.js';
+import { attendanceRows } from './guards.js';
+import { revenueByDay, withJoins } from './parking.js';
 import { attStat, summarize } from './rules.js';
 
 const MONTH_RE = /^\d{4}-\d{2}$/;
@@ -18,20 +21,12 @@ function addSheet(wb, name, columns, rows) {
   return ws;
 }
 
-export async function monthlyWorkbook(db, month) {
+export async function monthlyWorkbook(month) {
   const [y, m] = month.split('-').map(Number);
   const from = new Date(y, m - 1, 1), to = new Date(y, m, 1);
-  const sessions = (await db.query(
-    `select s.*, c.kind as card_kind, g.name as override_name from sessions s
-     left join cards c on c.uid = s.card_uid left join guards g on g.id = s.override_by
-     where s.time_in >= $1 and s.time_in < $2 order by s.time_in`, [from, to])).rows;
-  const revenue = (await db.query(
-    `select to_char(time_out at time zone $3, 'YYYY-MM-DD') as day, count(*)::int as sessions,
-            coalesce(sum(fee), 0)::int as revenue
-     from sessions where time_out >= $1 and time_out < $2 group by 1 order by 1`, [from, to, tz()])).rows;
-  const attendance = (await db.query(
-    `select a.*, g.name as guard_name from attendance a join guards g on g.id = a.guard_id
-     where a.time_in >= $1 and a.time_in < $2 order by a.time_in`, [from, to])).rows;
+  const sessions = await withJoins(await Session.find({ time_in: { $gte: from, $lt: to } }).sort({ time_in: 1 }).lean(), ['kind']);
+  const revenue = await revenueByDay(from, to);
+  const attendance = await attendanceRows(from, to, null, 1);
 
   const wb = new ExcelJS.Workbook();
   wb.creator = 'Bãi giữ xe API';
@@ -61,12 +56,12 @@ export async function monthlyWorkbook(db, month) {
   return wb;
 }
 
-export function reportsRouter({ db }) {
+export function reportsRouter() {
   const router = Router();
   router.get('/reports/monthly.xlsx', async (req, res) => {
     const month = str(req.query.month);
     if (!MONTH_RE.test(month)) throw new HttpError(400, 'Tháng dạng YYYY-MM');
-    const wb = await monthlyWorkbook(db, month);
+    const wb = await monthlyWorkbook(month);
     res.set({
       'content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       'content-disposition': `attachment; filename="bao-cao-${month}.xlsx"`,

@@ -1,22 +1,21 @@
 import { after, before, test } from 'node:test';
 import assert from 'node:assert/strict';
 import ExcelJS from 'exceljs';
-import { loginAs, startApp } from './helpers.js';
+import { ago, loginAs, startApp } from './helpers.js';
 
 let ctx, token;
 before(async () => {
   ctx = await startApp();
   token = await loginAs(ctx, 'manager', 'quanly');
-  await ctx.db.query("insert into cards (uid, kind, plate) values ('11111111', 'guest', null), ('22222222', 'monthly', '30A99999')");
-  await ctx.db.query(
-    `insert into sessions (card_uid, plate_in, time_in, time_out, fee) values
-       ('11111111', '59X112345', '2026-10-05T08:00:00+07', '2026-10-05T10:00:00+07', 3000),
-       ('22222222', '30A99999', now() - interval '1 hour', null, null)`);
-  const { rows: [g] } = await ctx.db.query("insert into guards (name) values ('Nguyễn Văn Tuấn') returning id");
-  await ctx.db.query(
-    `insert into attendance (guard_id, shift_name, shift_start, shift_end, time_in, time_out, method_in, method_out)
-     values ($1, 'Ca sáng', '2026-10-05T06:00:00+07', '2026-10-05T14:00:00+07', '2026-10-05T06:15:00+07',
-             '2026-10-05T14:00:00+07', 'finger', 'finger')`, [g.id]);
+  const { Card, Session, Guard, Attendance, insert } = ctx.db;
+  await Card.create([{ uid: '11111111', kind: 'guest' }, { uid: '22222222', kind: 'monthly', plate: '30A99999' }]);
+  await insert(Session, { card_uid: '11111111', plate_in: '59X112345', time_in: new Date('2026-10-05T08:00:00+07:00'),
+    time_out: new Date('2026-10-05T10:00:00+07:00'), fee: 3000, parked: false });
+  await insert(Session, { card_uid: '22222222', plate_in: '30A99999', time_in: ago(1) });
+  const g = await insert(Guard, { name: 'Nguyễn Văn Tuấn' });
+  await insert(Attendance, { guard_id: g.id, shift_name: 'Ca sáng', shift_start: new Date('2026-10-05T06:00:00+07:00'),
+    shift_end: new Date('2026-10-05T14:00:00+07:00'), time_in: new Date('2026-10-05T06:15:00+07:00'),
+    time_out: new Date('2026-10-05T14:00:00+07:00'), method_in: 'finger', method_out: 'finger', on_duty: false });
 });
 after(() => ctx.close());
 

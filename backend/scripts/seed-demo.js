@@ -2,7 +2,10 @@
 // Email đều là email phụ Gmail huyduong455+...@gmail.com: mọi mã OTP về chung 1 hộp thư, không rơi vào Spam.
 // Thẻ demo có UID DE0000xx, biển số giả: không đụng thẻ RFID thật của bãi.
 import bcrypt from 'bcryptjs';
-import pg from 'pg';
+import mongoose from 'mongoose';
+import {
+  Attendance, Card, GateEvent, Guard, initDb, insert, Session, Settings, TicketRequest, User,
+} from '../src/db.js';
 
 const PASSWORD = 'demo1234';
 const GUARD = 'Nguyễn Văn Tuấn';
@@ -12,48 +15,56 @@ const USERS = [
   ['khach01', 'huyduong455+kh01@gmail.com', 'Lê Minh Khách', 'customer'],
   ['khach02', 'huyduong455+kh02@gmail.com', 'Phạm Thu Hà', 'customer'],
 ];
-const DEMO_CARDS = "uid like 'DE0000%'";
+const DEMO_UID = /^DE0000/;
 
-const db = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
-await db.connect();
-const q = (sql, params) => db.query(sql, params);
+process.env.TZ ||= 'Asia/Ho_Chi_Minh';
+await mongoose.connect(process.env.MONGODB_URI);
+await initDb();
+
+const startOfDay = (daysAgo) => {
+  const d = new Date();
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate() - daysAgo);
+};
+const at = (daysAgo, hm) => {
+  const [h, m] = hm.split(':').map(Number);
+  const d = startOfDay(daysAgo);
+  d.setHours(h, m);
+  return d;
+};
+const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const hoursAgo = (h) => new Date(Date.now() - h * 3600e3);
 
 async function remove() {
-  const usernames = USERS.map((u) => u[0]);
-  await q(`delete from gate_events where uid like 'DE0000%'`);
-  await q(`delete from sessions where card_uid like 'DE0000%'`);
-  await q(`delete from ticket_requests where user_id in (select id from app_users where username = any($1))`, [usernames]);
-  await q(`delete from cards where ${DEMO_CARDS}`);
-  await q(`delete from app_users where username = any($1)`, [usernames]);
-  await q(`delete from attendance where guard_id in (select id from guards where name = $1)`, [GUARD]);
-  await q(`delete from guards where name = $1 and not exists (select 1 from sessions where override_by = guards.id)`, [GUARD]);
+  const users = await User.find({ username: { $in: USERS.map((u) => u[0]) } }, { _id: 1 }).lean();
+  const guards = await Guard.find({ name: GUARD }, { _id: 1 }).lean();
+  await GateEvent.deleteMany({ uid: DEMO_UID });
+  await Session.deleteMany({ card_uid: DEMO_UID });
+  await TicketRequest.deleteMany({ user_id: { $in: users.map((u) => u._id) } });
+  await Card.deleteMany({ uid: DEMO_UID });
+  await User.deleteMany({ _id: { $in: users.map((u) => u._id) } });
+  await Attendance.deleteMany({ guard_id: { $in: guards.map((g) => g._id) } });
+  for (const g of guards) if (!(await Session.exists({ override_by: g._id }))) await Guard.deleteOne({ _id: g._id });
 }
 
-await q('begin');
-try {
-  await remove();
-  if (process.argv.includes('--remove')) {
-    await q('commit');
-    console.log('Đã xoá dữ liệu demo');
-    process.exit(0);
-  }
+await remove();
+if (process.argv.includes('--remove')) {
+  console.log('Đã xoá dữ liệu demo');
+} else {
   const hash = await bcrypt.hash(PASSWORD, 10);
-  const { rows: [g] } = await q(
-    `insert into guards (name, pin_hash) values ($1, extensions.crypt('2468', extensions.gen_salt('bf'))) returning id`, [GUARD]);
+  const g = await insert(Guard, { name: GUARD, pin_hash: await bcrypt.hash('2468', 10) });
   const id = {};
   for (const [username, email, name, role] of USERS) {
-    const { rows: [u] } = await q(
-      `insert into app_users (username, email, full_name, password_hash, role, guard_id, active)
-       values ($1, $2, $3, $4, $5, $6, true) returning id`, [username, email, name, hash, role, role === 'guard' ? g.id : null]);
-    id[username] = u.id;
+    id[username] = (await insert(User, { username, email, full_name: name, password_hash: hash, role,
+      guard_id: role === 'guard' ? g.id : null, active: true })).id;
   }
 
   // Thẻ: khach01 vé tháng còn hạn (xe đang trong bãi), khach02 vé tháng hết hạn (đang chờ gia hạn), 2 vé lượt.
-  await q(`insert into cards (uid, kind, plate, owner, user_id, valid_until) values
-    ('DE000001', 'monthly', '59X188888', 'Lê Minh Khách', $1, current_date + 25),
-    ('DE000002', 'monthly', '51G22222', 'Phạm Thu Hà', $2, current_date - 3),
-    ('DE000003', 'guest', null, null, null, null),
-    ('DE000004', 'guest', null, null, null, null)`, [id.khach01, id.khach02]);
+  await Card.create([
+    { uid: 'DE000001', kind: 'monthly', plate: '59X188888', owner: 'Lê Minh Khách', user_id: id.khach01, valid_until: ymd(startOfDay(-25)) },
+    { uid: 'DE000002', kind: 'monthly', plate: '51G22222', owner: 'Phạm Thu Hà', user_id: id.khach02, valid_until: ymd(startOfDay(3)) },
+    { uid: 'DE000003', kind: 'guest' },
+    { uid: 'DE000004', kind: 'guest' },
+  ]);
 
   // Lượt gửi 7 ngày qua: vé tháng miễn phí, vé lượt có phí ngày / đêm (biểu đồ doanh thu có số).
   const closed = [
@@ -64,46 +75,35 @@ try {
     ['DE000003', '61C24680', 1, 8, 9, 3000], ['DE000004', '43D13579', 0, 7, 9, 3000],
   ];
   for (const [card, plate, daysAgo, inH, outH, fee] of closed) {
-    await q(`insert into sessions (card_uid, plate_in, plate_out, time_in, time_out, fee) values
-      ($1, $2, $2, date_trunc('day', now() at time zone 'Asia/Ho_Chi_Minh') at time zone 'Asia/Ho_Chi_Minh'
-           - make_interval(days => $3) + make_interval(hours => $4),
-       date_trunc('day', now() at time zone 'Asia/Ho_Chi_Minh') at time zone 'Asia/Ho_Chi_Minh'
-           - make_interval(days => $3) + make_interval(hours => $5), $6)`, [card, plate, daysAgo, inH, outH, fee]);
+    const timeIn = new Date(startOfDay(daysAgo).getTime() + inH * 3600e3);
+    const timeOut = new Date(startOfDay(daysAgo).getTime() + outH * 3600e3);
+    await insert(Session, { card_uid: card, plate_in: plate, plate_out: plate, time_in: timeIn, time_out: timeOut, fee, parked: false });
   }
   // Đang trong bãi: xe của khach01 và một xe vé lượt.
-  await q(`insert into sessions (card_uid, plate_in, time_in) values
-    ('DE000001', '59X188888', now() - interval '2 hours'), ('DE000003', '30A12345', now() - interval '40 minutes')`);
-  await q(`insert into gate_events (gate, kind, uid, status, plate, message, open, created_at) values
-    ('in', 'scan', 'DE000001', 'ok', '59X188888', 'Moi vao', false, now() - interval '2 hours'),
-    ('in', 'scan', 'DE000003', 'ok', '30A12345', 'Moi vao', false, now() - interval '40 minutes')`);
+  await insert(Session, { card_uid: 'DE000001', plate_in: '59X188888', time_in: hoursAgo(2) });
+  await insert(Session, { card_uid: 'DE000003', plate_in: '30A12345', time_in: hoursAgo(40 / 60) });
+  await insert(GateEvent, { gate: 'in', kind: 'scan', uid: 'DE000001', status: 'ok', plate: '59X188888', message: 'Moi vao', created_at: hoursAgo(2) });
+  await insert(GateEvent, { gate: 'in', kind: 'scan', uid: 'DE000003', status: 'ok', plate: '30A12345', message: 'Moi vao', created_at: hoursAgo(40 / 60) });
 
   // Đơn gia hạn 3 tháng của khach02 đang chờ quản lý duyệt; 1 đơn cũ bị từ chối.
-  await q(`insert into ticket_requests (user_id, card_uid, plate, owner_name, months, note) values
-    ($1, 'DE000002', '51G22222', 'Phạm Thu Hà', 3, 'Xe Vision trắng, gửi giờ hành chính')`, [id.khach02]);
-  await q(`insert into ticket_requests (user_id, plate, owner_name, months, status, reply, handled_at, created_at) values
-    ($1, '59X199999', 'Lê Minh Khách', 1, 'rejected', 'Mỗi người chỉ đăng ký 1 xe vé tháng', now() - interval '3 days',
-     now() - interval '4 days')`, [id.khach01]);
+  await insert(TicketRequest, { user_id: id.khach02, card_uid: 'DE000002', plate: '51G22222', owner_name: 'Phạm Thu Hà', months: 3,
+    note: 'Xe Vision trắng, gửi giờ hành chính' });
+  await insert(TicketRequest, { user_id: id.khach01, plate: '59X199999', owner_name: 'Lê Minh Khách', months: 1, status: 'rejected',
+    reply: 'Mỗi người chỉ đăng ký 1 xe vé tháng', handled_at: hoursAgo(72), created_at: hoursAgo(96) });
 
-  // Bảng công tháng này của bảo vệ demo: đúng giờ, trễ, về sớm, quên chấm ra.
+  // Bảng công gần đây của bảo vệ demo: đúng giờ, trễ, về sớm, quên chấm ra.
   const shifts = [[1, '06:00', '06:03', '14:01', 'finger'], [2, '06:00', '06:12', '14:00', 'pin'],
     [3, '14:00', '13:55', '21:40', 'finger'], [4, '06:00', '05:58', null, 'auto']];
   for (const [daysAgo, start, tin, tout, how] of shifts) {
-    const day = `(date_trunc('day', now() at time zone 'Asia/Ho_Chi_Minh') - make_interval(days => ${daysAgo}))`;
-    const at = (hm) => `(${day} + time '${hm}') at time zone 'Asia/Ho_Chi_Minh'`;
     const end = start === '06:00' ? '14:00' : '22:00';
-    await q(`insert into attendance (guard_id, shift_name, shift_start, shift_end, time_in, time_out, method_in, method_out)
-      values ($1, $2, ${at(start)}, ${at(end)}, ${at(tin)}, ${tout ? at(tout) : at(end)}, 'finger', $3)`,
-    [g.id, start === '06:00' ? 'Ca sáng' : 'Ca chiều', how]);
+    await insert(Attendance, { guard_id: g.id, shift_name: start === '06:00' ? 'Ca sáng' : 'Ca chiều',
+      shift_start: at(daysAgo, start), shift_end: at(daysAgo, end), time_in: at(daysAgo, tin),
+      time_out: at(daysAgo, tout ?? end), method_in: 'finger', method_out: how, on_duty: false });
   }
 
   // Thông tin bãi cho bản đồ của khách (chỉ điền khi chưa có).
-  await q(`update settings set lot_name = 'Bãi giữ xe HUTECH', address = '475A Điện Biên Phủ, P.25, Bình Thạnh, TP.HCM',
-    lat = 10.80167, lng = 106.71442 where lat is null`);
-  await q('commit');
+  await Settings.updateOne({ _id: 1, lat: null }, { lot_name: 'Bãi giữ xe HUTECH',
+    address: '475A Điện Biên Phủ, P.25, Bình Thạnh, TP.HCM', lat: 10.80167, lng: 106.71442 });
   console.log(`Đã tạo dữ liệu demo. Mật khẩu chung: ${PASSWORD}. PIN bảo vệ ${GUARD}: 2468`);
-} catch (err) {
-  await q('rollback');
-  throw err;
-} finally {
-  await db.end();
 }
+await mongoose.disconnect();

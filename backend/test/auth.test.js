@@ -6,7 +6,6 @@ let ctx;
 before(async () => {
   ctx = await startApp({
     verifyGoogle: async (t) => (t === 'good' ? { sub: 'g-1', email: 'Lan@Gmail.com', email_verified: true, name: 'Lan' } : null),
-    verifySupabase: async (t) => (t === 'supabase-staff' ? { email: 'camera@bai.vn' } : null),
   });
 });
 after(() => ctx.close());
@@ -59,11 +58,8 @@ test('phân quyền: bảo vệ không xem được lịch sử, quản lý khô
   assert.equal((await ctx.call('GET', '/sessions')).status, 401);
 });
 
-test('token Supabase của ĐT camera (staff) dùng được như quản lý', async () => {
-  const me = await ctx.call('GET', '/me', { token: 'supabase-staff' });
-  assert.deepEqual([me.body.role, me.body.device], ['manager', true]);
-  assert.equal((await ctx.call('GET', '/cards', { token: 'supabase-staff' })).status, 200);
-  assert.equal((await ctx.call('GET', '/cards', { token: 'supabase-khac' })).status, 401);
+test('token giả / sai chữ ký bị từ chối', async () => {
+  assert.equal((await ctx.call('GET', '/cards', { token: 'khong-phai-jwt' })).status, 401);
 });
 
 test('admin đổi vai trò, không tự hạ quyền mình', async () => {
