@@ -212,7 +212,7 @@ class GateStation {
     if (g == 'in') {
       d = decideEntry(
           card: card, hasOpenSession: open != null, free: extra['free'] as int, plate: plate,
-          score: read?.score ?? 0, candidates: read?.candidates ?? const [], parkedPlates: parked);
+          score: read?.score ?? 0, candidates: read?.candidates ?? const [], parkedPlates: parked, now: now);
       if (d.ok) await db.from('sessions').insert({'card_uid': uid, 'plate_in': plate, 'img_in': path});
     } else {
       d = decideExit(

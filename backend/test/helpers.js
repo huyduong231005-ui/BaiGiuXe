@@ -24,7 +24,8 @@ const SUPABASE_STUBS = `
 
 /** PGlite bọc lại cho giống pg.Pool: query() trả { rows, rowCount }. */
 export async function createDb() {
-  const pg = await PGlite.create({ extensions: { pgcrypto } });
+  // date -> chuỗi 'YYYY-MM-DD' giống server.js
+  const pg = await PGlite.create({ extensions: { pgcrypto }, parsers: { 1082: (v) => v } });
   await pg.exec(SUPABASE_STUBS);
   for (const f of readdirSync(MIGRATIONS).sort()) await pg.exec(readFileSync(MIGRATIONS + f, 'utf8'));
   return {
@@ -80,6 +81,6 @@ export async function loginAs(ctx, role, username = role) {
   await ctx.call('POST', '/auth/register', { body: { email, username, password: 'matkhau1' } });
   const reg = ctx.mails.findLast((m) => m.to === email);
   const { body } = await ctx.call('POST', '/auth/register/verify', { body: { email, code: reg.code } });
-  if (role !== 'guard') await ctx.db.query('update app_users set role = $1 where username = $2', [role, username]);
+  if (role !== 'customer') await ctx.db.query('update app_users set role = $1 where username = $2', [role, username]);
   return body.token;
 }

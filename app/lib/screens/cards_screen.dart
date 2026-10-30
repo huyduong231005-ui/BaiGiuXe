@@ -6,6 +6,7 @@ import '../api.dart';
 import '../logic.dart';
 import '../main.dart';
 import '../nfc.dart';
+import 'requests_screen.dart';
 
 final _uidRe = RegExp(r'^[0-9A-F]{8,20}$');
 const _scanPollEvery = Duration(seconds: 2);
@@ -99,6 +100,17 @@ class _CardsScreenState extends State<CardsScreen> {
                 style: TextStyle(color: s.onSurfaceVariant)),
           ]),
         ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
+          child: OutlinedButton.icon(
+            onPressed: () async {
+              await Navigator.push(context, MaterialPageRoute(builder: (_) => const RequestsScreen()));
+              _load(); // duyệt đơn có thể tạo / gia hạn thẻ
+            },
+            icon: const Icon(Icons.assignment_outlined),
+            label: const Text('Đơn đăng ký / gia hạn vé tháng của khách'),
+          ),
+        ),
         Expanded(
           child: RefreshIndicator(
             onRefresh: _load,
@@ -132,7 +144,13 @@ class _CardTile extends StatelessWidget {
     final monthly = c['kind'] == 'monthly';
     final active = c['active'] == true;
     final plate = c['plate'] as String?;
-    final info = [if (plate != null) 'UID ${c['uid']}', if (c['owner'] != null) c['owner']].join(' · ');
+    final info = [
+      if (plate != null) 'UID ${c['uid']}',
+      if (c['owner'] != null) c['owner'],
+      if (c['user_name'] != null) '@${c['user_name']}',
+    ].join(' · ');
+    final until = c['valid_until'] as String?;
+    final expired = monthly && !monthlyValid(c, DateTime.now());
     return Card(
       child: ListTile(
         contentPadding: const EdgeInsets.fromLTRB(16, 4, 4, 4),
@@ -148,7 +166,8 @@ class _CardTile extends StatelessWidget {
           const SizedBox(height: 4),
           Wrap(spacing: 6, children: [
             _Tag(monthly ? 'Vé tháng' : 'Vé lượt', monthly ? s.tertiary : s.primary),
-            if (!active) _Tag('Đã khoá', s.error),
+            if (monthly && until != null) _Tag('${expired ? 'Hết hạn' : 'Đến'} ${until.substring(8, 10)}/${until.substring(5, 7)}', expired ? s.error : s.tertiary),
+            if (c['lost_at'] != null) _Tag('Khách báo mất', s.error) else if (!active) _Tag('Đã khoá', s.error),
           ]),
         ]),
         isThreeLine: info.isNotEmpty,
@@ -189,6 +208,8 @@ class _CardFormState extends State<CardForm> {
   late final owner = TextEditingController(text: widget.card?['owner'] as String?);
   late String kind = widget.card?['kind'] as String? ?? 'guest';
   late bool active = widget.card?['active'] as bool? ?? true;
+  late String? validUntil = widget.card?['valid_until'] as String?; // 'YYYY-MM-DD', null = không giới hạn
+  late bool lost = widget.card?['lost_at'] != null;
   Timer? listening;
   Rec? existing; // thẻ vừa quẹt đã có trong hệ thống
   String? error;
@@ -273,6 +294,8 @@ class _CardFormState extends State<CardForm> {
       'plate': p.isEmpty ? null : p,
       'owner': owner.text.trim().isEmpty ? null : owner.text.trim(),
       'active': active,
+      'validUntil': kind == 'monthly' ? validUntil : null,
+      if (widget.card?['lost_at'] != null && !lost) 'lost': false, // khách tìm lại được thẻ
     };
     setState(() {
       saving = true;
@@ -350,6 +373,25 @@ class _CardFormState extends State<CardForm> {
           selected: {kind},
           onSelectionChanged: (v) => setState(() => kind = v.first),
         ),
+        if (kind == 'monthly') ...[
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            icon: const Icon(Icons.event),
+            label: Text(validUntil == null ? 'Hạn vé: không giới hạn (chạm để chọn)' : 'Hạn vé: dùng tới hết $validUntil'),
+            onPressed: () async {
+              final now = DateTime.now();
+              final d = await showDatePicker(
+                context: context,
+                initialDate: validUntil == null ? DateTime(now.year, now.month + 1, now.day) : DateTime.parse(validUntil!),
+                firstDate: DateTime(now.year - 1),
+                lastDate: DateTime(now.year + 3),
+              );
+              if (d != null) {
+                setState(() => validUntil = '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}');
+              }
+            },
+          ),
+        ],
         const SizedBox(height: 20),
         TextField(
           controller: plate,
@@ -366,6 +408,18 @@ class _CardFormState extends State<CardForm> {
           textCapitalization: TextCapitalization.words,
           decoration: const InputDecoration(labelText: 'Chủ xe', prefixIcon: Icon(Icons.person_outline)),
         ),
+        if (!isNew && widget.card!['lost_at'] != null) ...[
+          fieldGap,
+          Card(
+            color: s.errorContainer,
+            child: SwitchListTile(
+              title: Text('Khách đã báo mất thẻ', style: TextStyle(color: s.onErrorContainer, fontWeight: FontWeight.w600)),
+              subtitle: Text('Tắt khi khách tìm lại được thẻ, rồi bật "Đang hoạt động"', style: TextStyle(color: s.onErrorContainer)),
+              value: lost,
+              onChanged: (v) => setState(() => lost = v),
+            ),
+          ),
+        ],
         if (!isNew) ...[
           fieldGap,
           Card(

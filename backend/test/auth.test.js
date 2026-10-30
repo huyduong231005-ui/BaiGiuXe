@@ -21,7 +21,7 @@ test('đăng ký -> OTP qua email -> xác minh -> đăng nhập 2 bước bằng
   assert.equal((await ctx.call('POST', '/auth/register/verify', { body: { email: 'huy@test.vn', code: '000000' } })).status, 400);
   const v = await ctx.call('POST', '/auth/register/verify', { body: { email: 'huy@test.vn', code: otp.code } });
   assert.equal(v.status, 200);
-  assert.equal(v.body.user.role, 'guard');
+  assert.equal(v.body.user.role, 'customer'); // tự đăng ký = khách hàng (chủ vé tháng)
 
   assert.equal((await ctx.call('POST', '/auth/login', { body: { username: 'huy', password: 'sai' } })).status, 401);
   assert.equal((await ctx.call('POST', '/auth/login', { body: { username: 'huy', password: 'matkhau1' } })).status, 200);

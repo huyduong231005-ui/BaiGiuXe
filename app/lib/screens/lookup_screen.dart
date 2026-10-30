@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../api.dart';
 import '../logic.dart';
@@ -50,6 +51,25 @@ class _LookupScreenState extends State<LookupScreen> {
         await _search(candidates: (r['candidates'] as List).cast<String>(), score: (r['score'] as num).toDouble());
       });
 
+  /// Khách mở "Mã QR vé" trên app của họ; quét ra lượt đang gửi của thẻ đó (mã ký, hết hạn 10 phút).
+  Future<void> _scanTicket() async {
+    final raw = await Navigator.push<String>(context, MaterialPageRoute(builder: (_) => const _QrScanPage()));
+    if (raw == null) return;
+    await _run(() async {
+      final r = await api.get('/sessions/by-ticket', {'qr': raw}) as Rec;
+      setState(() {
+        matches = (r['matches'] as List).cast<Rec>();
+        plate.clear();
+        note = [
+          'Vé của ${r['owner'] ?? 'khách'} · thẻ ${r['cardUid']}',
+          if (r['validUntil'] != null) 'hạn đến ${r['validUntil']}',
+          if (r['lost'] == true) 'THẺ ĐÃ BÁO MẤT',
+          if (matches!.isEmpty) 'xe không ở trong bãi',
+        ].join(' · ');
+      });
+    });
+  }
+
   Future<void> _search({List<String> candidates = const [], double? score}) async {
     final p = normPlate(plate.text);
     if (p.isEmpty) return;
@@ -92,6 +112,13 @@ class _LookupScreenState extends State<LookupScreen> {
           label: const Text('Chụp biển số'),
           style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(56)),
         ),
+        const SizedBox(height: 8),
+        OutlinedButton.icon(
+          onPressed: busy ? null : _scanTicket,
+          icon: const Icon(Icons.qr_code_scanner),
+          label: const Text('Quét mã QR vé của khách'),
+          style: OutlinedButton.styleFrom(minimumSize: const Size.fromHeight(48)),
+        ),
         const SizedBox(height: 12),
         TextField(
           controller: plate,
@@ -106,7 +133,7 @@ class _LookupScreenState extends State<LookupScreen> {
         if (busy) const Padding(padding: EdgeInsets.only(top: 16), child: LinearProgressIndicator()),
         if (note != null) Padding(padding: const EdgeInsets.only(top: 12), child: Text(note!, style: TextStyle(color: s.onSurfaceVariant))),
         const SizedBox(height: 16),
-        if (matches case final list? when list.isEmpty)
+        if (matches case final list? when list.isEmpty && plate.text.isNotEmpty)
           Card(
             color: s.errorContainer,
             child: ListTile(
@@ -129,6 +156,9 @@ class _LookupScreenState extends State<LookupScreen> {
                 Text('Thẻ ${m['card_uid']} · ${m['card_kind'] == 'monthly' ? 'Vé tháng' : 'Vé lượt'}'
                     '${m['card_owner'] != null ? ' · ${m['card_owner']}' : ''}'),
                 Text('Vào ${hhmm(m['time_in'] as String)} · phí nếu ra bây giờ ${m['feeNow']} đ'),
+                if (m['card_lost_at'] != null)
+                  Text('Chủ thẻ đã báo mất: kiểm tra giấy tờ xe trước khi cho ra',
+                      style: TextStyle(color: s.error, fontWeight: FontWeight.w600)),
                 const SizedBox(height: 8),
                 PlateImage(m['img_in'] as String?, height: 160),
                 const SizedBox(height: 8),
@@ -139,4 +169,29 @@ class _LookupScreenState extends State<LookupScreen> {
       ]),
     );
   }
+}
+
+/// Camera quét QR: trả về chuỗi mã đầu tiên đọc được.
+class _QrScanPage extends StatefulWidget {
+  const _QrScanPage();
+
+  @override
+  State<_QrScanPage> createState() => _QrScanPageState();
+}
+
+class _QrScanPageState extends State<_QrScanPage> {
+  bool done = false;
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+        appBar: AppBar(title: const Text('Quét mã QR vé')),
+        body: MobileScanner(
+          onDetect: (capture) {
+            final v = capture.barcodes.firstOrNull?.rawValue;
+            if (v == null || done) return;
+            done = true; // camera bắn nhiều lần một giây, chỉ trả kết quả đầu
+            Navigator.pop(context, v);
+          },
+        ),
+      );
 }

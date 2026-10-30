@@ -3,6 +3,7 @@ import express from 'express';
 import rateLimit from 'express-rate-limit';
 import { authRouter, HttpError, publicUser, requireAuth, updateProfile } from './auth.js';
 import { adminRouter } from './admin.js';
+import { customerRouter, requestsRouter } from './customer.js';
 import { guardsRouter, meAttendance } from './guards.js';
 import { openapi } from './openapi.js';
 import { manageRouter, publicRouter, viewRouter } from './parking.js';
@@ -44,7 +45,10 @@ export function createApp(deps) {
   app.get('/me/attendance', auth(), meAttendance(deps));
 
   app.use('/admin', auth('admin'), adminRouter(deps));
-  app.use(staff, viewRouter(deps), manageRouter(deps), guardsRouter(deps), platesRouter(deps), reportsRouter(deps));
+  app.use('/me', auth('customer')); // các API /me/... còn lại là của khách hàng (chủ vé tháng)
+  app.use(customerRouter(deps));
+  app.use(staff, viewRouter(deps), manageRouter(deps), guardsRouter(deps), platesRouter(deps), reportsRouter(deps),
+    requestsRouter(deps));
 
   app.use((_req, _res, next) => next(new HttpError(404, 'Không tìm thấy API')));
   // eslint-disable-next-line no-unused-vars

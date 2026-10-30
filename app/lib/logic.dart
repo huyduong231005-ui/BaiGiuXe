@@ -83,6 +83,15 @@ class Decision {
 /// ponytail: hạ xuống nếu biển thật hay bị từ chối oan; nâng lên nếu vẫn lọt biển đọc sai.
 const minPlateScore = 0.8;
 
+/// Vé tháng còn hạn: dùng tới hết ngày valid_until (giờ địa phương); valid_until null = không giới hạn.
+bool monthlyValid(Rec? card, DateTime now) {
+  if (card?['kind'] != 'monthly') return false;
+  final v = card!['valid_until'] as String?;
+  if (v == null) return true;
+  final d = DateTime.parse(v);
+  return now.isBefore(DateTime(d.year, d.month, d.day + 1));
+}
+
 /// Xe chỉ được vào khi: thẻ hợp lệ, bãi còn chỗ, ĐỌC ĐƯỢC biển rõ ràng, và biển đó chưa ở trong bãi.
 /// Biển là chìa khoá đối chiếu lúc ra, nên không đọc được biển thì không cho vào.
 Decision decideEntry({
@@ -93,9 +102,14 @@ Decision decideEntry({
   double score = 1,
   List<String> candidates = const [],
   List<String> parkedPlates = const [],
+  DateTime? now,
 }) {
   if (card == null) return const Decision.deny('The chua dang ky');
+  if (card['lost_at'] != null) return const Decision.deny('The da bao mat');
   if (card['active'] != true) return const Decision.deny('The bi khoa');
+  if (card['kind'] == 'monthly' && !monthlyValid(card, now ?? DateTime.now())) {
+    return const Decision.deny('Ve thang het han');
+  }
   if (hasOpenSession) return const Decision.deny('The dang gui xe');
   if (free <= 0) return const Decision.deny('Bai da day');
   if (plate == null || normPlate(plate).isEmpty) return const Decision.deny('Khong doc duoc bien');
@@ -116,6 +130,8 @@ Decision decideExit({
   required FeeConfig cfg,
 }) {
   if (session == null) return const Decision.deny('Khong co luot gui');
+  // Chủ thẻ đã báo mất: người cầm thẻ có thể không phải chủ xe -> bảo vệ kiểm tra giấy tờ rồi mở tay.
+  if (card?['lost_at'] != null) return const Decision.deny('The da bao mat');
   if (plateOut == null) return const Decision.deny('Khong doc duoc bien');
   final plateIn = session['plate_in'] as String?;
   if (plateIn == null) return const Decision.deny('Thieu bien luc vao');
@@ -124,8 +140,9 @@ Decision decideExit({
   return Decision.allow('Phi: ${fee}d', open: true, fee: fee);
 }
 
+/// Vé tháng hết hạn trong lúc xe đang gửi thì tính phí như vé lượt.
 int feeFor(Rec session, Rec? card, DateTime now, FeeConfig cfg) =>
-    calcFee(DateTime.parse(session['time_in'] as String), now, cfg, monthly: card?['kind'] == 'monthly');
+    calcFee(DateTime.parse(session['time_in'] as String), now, cfg, monthly: monthlyValid(card, now));
 
 // ---------- Chấm công bảo vệ ----------
 

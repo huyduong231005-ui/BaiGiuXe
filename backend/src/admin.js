@@ -1,9 +1,29 @@
 // Quản trị tài khoản API: xem, đổi vai trò, khoá, gắn với hồ sơ bảo vệ, xoá.
 import { Router } from 'express';
-import { HttpError, publicUser, ROLES, str } from './auth.js';
+import bcrypt from 'bcryptjs';
+import { EMAIL_RE, HttpError, MIN_PASSWORD, publicUser, ROLES, str, USERNAME_RE } from './auth.js';
 
 export function adminRouter({ db }) {
   const router = Router();
+
+  // Admin tạo sẵn tài khoản (quản lý, bảo vệ, khách vé tháng) đã kích hoạt, không cần OTP đăng ký.
+  router.post('/users', async (req, res) => {
+    const b = req.body ?? {};
+    const email = str(b.email).toLowerCase();
+    const username = str(b.username).toLowerCase();
+    const password = typeof b.password === 'string' ? b.password : '';
+    const role = b.role ?? 'customer';
+    if (!EMAIL_RE.test(email)) throw new HttpError(400, 'Email không hợp lệ');
+    if (!USERNAME_RE.test(username)) throw new HttpError(400, 'Tên đăng nhập 3–30 ký tự: chữ thường, số, dấu _ hoặc .');
+    if (password.length < MIN_PASSWORD) throw new HttpError(400, `Mật khẩu tối thiểu ${MIN_PASSWORD} ký tự`);
+    if (!ROLES.includes(role)) throw new HttpError(400, `Vai trò là một trong: ${ROLES.join(', ')}`);
+    const guardId = Number.isInteger(b.guardId) ? b.guardId : null;
+    const { rows } = await db.query(
+      `insert into app_users (email, username, full_name, password_hash, role, guard_id, active)
+       values ($1, $2, $3, $4, $5, $6, true) returning *`,
+      [email, username, str(b.fullName), await bcrypt.hash(password, 10), role, guardId]);
+    res.status(201).json(publicUser(rows[0]));
+  });
 
   router.get('/users', async (req, res) => {
     const q = `%${str(req.query.q).toLowerCase()}%`;

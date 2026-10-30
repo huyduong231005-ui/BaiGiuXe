@@ -6,7 +6,10 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'api.dart';
 import 'google_auth.dart';
+import 'lock.dart';
+import 'screens/accounts_screen.dart';
 import 'screens/attendance_screen.dart';
+import 'screens/customer_screen.dart';
 import 'screens/camera_screen.dart';
 import 'screens/cards_screen.dart';
 import 'screens/dashboard_screen.dart';
@@ -80,7 +83,14 @@ class App extends StatelessWidget {
         home: ValueListenableBuilder<ApiUser?>(
           valueListenable: api.session,
           builder: (_, user, _) => user != null
-              ? (user.isStaff ? const ManagerHome() : GuardHome(user))
+              ? AppLock(
+                  key: ValueKey(user.username),
+                  child: user.isStaff
+                      ? ManagerHome(admin: user.role == 'admin')
+                      : user.isCustomer
+                          ? CustomerHome(user)
+                          : GuardHome(user),
+                )
               : StreamBuilder<AuthState>(
                   stream: Supabase.instance.client.auth.onAuthStateChange,
                   builder: (_, _) =>
@@ -185,9 +195,10 @@ class _RoleCard extends StatelessWidget {
 }
 
 class ManagerHome extends StatefulWidget {
-  const ManagerHome({super.key, this.onChangeRole, this.onShowCamera});
+  const ManagerHome({super.key, this.onChangeRole, this.onShowCamera, this.admin = false});
 
   final VoidCallback? onChangeRole; // chỉ có trên thiết bị đăng nhập Supabase (chọn vai trò theo máy)
+  final bool admin; // admin có thêm tab Tài khoản (quản trị người dùng)
   final VoidCallback? onShowCamera; // có trên ĐT camera: thêm mục "Camera" ở thanh dưới
 
   @override
@@ -198,30 +209,34 @@ class _ManagerHomeState extends State<ManagerHome> {
   int tab = 0;
 
   @override
-  Widget build(BuildContext context) => Scaffold(
-        body: SafeArea(
-          child: IndexedStack(index: tab, children: [
-            const DashboardScreen(),
-            const HistoryScreen(),
-            const CardsScreen(),
-            const GuardsScreen(),
-            SettingsScreen(onChangeRole: widget.onChangeRole),
-          ]),
-        ),
-        bottomNavigationBar: NavigationBar(
-          selectedIndex: tab,
-          onDestinationSelected: (i) => i == 5 ? widget.onShowCamera!() : setState(() => tab = i),
-          labelBehavior: NavigationDestinationLabelBehavior.onlyShowSelected, // 6 mục: hiện hết nhãn thì chật
-          destinations: [
-            const NavigationDestination(icon: Icon(Icons.local_parking), label: 'Tổng quan'),
-            const NavigationDestination(icon: Icon(Icons.history), label: 'Lịch sử'),
-            const NavigationDestination(icon: Icon(Icons.credit_card), label: 'Thẻ'),
-            const NavigationDestination(icon: Icon(Icons.security), label: 'Bảo vệ'),
-            const NavigationDestination(icon: Icon(Icons.settings), label: 'Cài đặt'),
-            if (widget.onShowCamera != null) const NavigationDestination(icon: Icon(Icons.videocam), label: 'Camera'),
-          ],
-        ),
-      );
+  Widget build(BuildContext context) {
+    final pages = [
+      const DashboardScreen(),
+      const HistoryScreen(),
+      const CardsScreen(),
+      const GuardsScreen(),
+      if (widget.admin) const AccountsScreen(embedded: true),
+      SettingsScreen(onChangeRole: widget.onChangeRole),
+    ];
+    return Scaffold(
+      body: SafeArea(child: IndexedStack(index: tab, children: pages)),
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: tab,
+        // Mục cuối "Camera" (chỉ trên ĐT camera) không phải trang: quay về màn camera.
+        onDestinationSelected: (i) => i == pages.length ? widget.onShowCamera!() : setState(() => tab = i),
+        labelBehavior: NavigationDestinationLabelBehavior.onlyShowSelected, // 6 mục: hiện hết nhãn thì chật
+        destinations: [
+          const NavigationDestination(icon: Icon(Icons.local_parking), label: 'Tổng quan'),
+          const NavigationDestination(icon: Icon(Icons.history), label: 'Lịch sử'),
+          const NavigationDestination(icon: Icon(Icons.credit_card), label: 'Thẻ'),
+          const NavigationDestination(icon: Icon(Icons.security), label: 'Bảo vệ'),
+          if (widget.admin) const NavigationDestination(icon: Icon(Icons.manage_accounts), label: 'Tài khoản'),
+          const NavigationDestination(icon: Icon(Icons.settings), label: 'Cài đặt'),
+          if (widget.onShowCamera != null) const NavigationDestination(icon: Icon(Icons.videocam), label: 'Camera'),
+        ],
+      ),
+    );
+  }
 }
 
 /// Snackbar báo lỗi dùng chung cho các màn hình.
@@ -230,20 +245,24 @@ void showError(BuildContext context, Object e) {
   ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg), backgroundColor: Colors.red));
 }
 
-/// Ảnh biển số trong bucket private 'plates'.
+/// Ảnh biển số trong bucket private 'plates' (API cấp link ký có hạn 1 giờ).
+/// Khách hàng dùng [endpoint] '/me/plates/url': chỉ xem được ảnh xe của mình.
 class PlateImage extends StatelessWidget {
-  const PlateImage(this.path, {super.key, this.height = 200});
+  const PlateImage(this.path, {super.key, this.height = 200, this.endpoint = '/plates/url'});
 
   final String? path;
   final double height;
+  final String endpoint;
 
   @override
   Widget build(BuildContext context) {
     if (path == null) return SizedBox(height: height, child: const Center(child: Text('Không có ảnh')));
     return FutureBuilder<String>(
-      future: api.get('/plates/url', {'path': path!}).then((r) => r['url'] as String),
+      future: api.get(endpoint, {'path': path!}).then((r) => r['url'] as String),
       builder: (_, s) => s.hasData
-          ? Image.network(s.data!, height: height, fit: BoxFit.contain)
+          ? Image.network(s.data!, height: height, fit: BoxFit.contain,
+              errorBuilder: (_, _, _) => SizedBox(
+                  height: height, child: const Center(child: Text('Không tải được ảnh, kéo xuống để thử lại'))))
           : SizedBox(height: height, child: Center(child: s.hasError ? Text('${s.error}') : const CircularProgressIndicator())),
     );
   }

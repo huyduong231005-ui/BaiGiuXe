@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../api.dart';
 import '../logic.dart';
 import '../main.dart';
+import '../lock.dart';
 import 'accounts_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -19,6 +20,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
   final priceDay = TextEditingController();
   final priceNight = TextEditingController();
   final nightMark = TextEditingController();
+  final lotName = TextEditingController();
+  final address = TextEditingController();
+  final latLng = TextEditingController(); // "10.8017, 106.7149" (copy từ Google Maps)
   List<Rec> shifts = [];
 
   @override
@@ -36,6 +40,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
         priceDay.text = '${s['price_day']}';
         priceNight.text = '${s['price_night']}';
         nightMark.text = (s['night_mark'] as String).substring(0, 5);
+        lotName.text = s['lot_name'] as String? ?? '';
+        address.text = s['address'] as String? ?? '';
+        latLng.text = s['lat'] == null ? '' : '${s['lat']}, ${s['lng']}';
       });
     } catch (e) {
       if (mounted) showError(context, e);
@@ -116,12 +123,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (!RegExp(r'^([01]\d|2[0-3]):[0-5]\d$').hasMatch(nightMark.text.trim())) {
       return showError(context, 'Mốc đêm dạng HH:MM');
     }
+    final ll = latLng.text.split(',').map((v) => double.tryParse(v.trim())).toList();
+    if (latLng.text.trim().isNotEmpty && (ll.length != 2 || ll.contains(null))) {
+      return showError(context, 'Toạ độ dạng "vĩ độ, kinh độ", VD 10.8017, 106.7149');
+    }
     try {
       await api.put('/settings', {
         'capacity': ints[0],
         'priceDay': ints[1],
         'priceNight': ints[2],
         'nightMark': nightMark.text.trim(),
+        'lotName': lotName.text.trim(),
+        'address': address.text.trim(),
+        'lat': latLng.text.trim().isEmpty ? null : ll[0],
+        'lng': latLng.text.trim().isEmpty ? null : ll[1],
       });
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Đã lưu')));
     } catch (e) {
@@ -151,6 +166,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
       TextField(
         controller: nightMark,
         decoration: const InputDecoration(labelText: 'Mốc tính qua đêm (HH:MM)', prefixIcon: Icon(Icons.schedule)),
+      ),
+      const SizedBox(height: 20),
+      Text('Thông tin bãi (khách xem trên bản đồ)', style: header),
+      const SizedBox(height: 12),
+      TextField(controller: lotName, decoration: const InputDecoration(labelText: 'Tên bãi', prefixIcon: Icon(Icons.local_parking))),
+      fieldGap,
+      TextField(controller: address, decoration: const InputDecoration(labelText: 'Địa chỉ', prefixIcon: Icon(Icons.place_outlined))),
+      fieldGap,
+      TextField(
+        controller: latLng,
+        decoration: const InputDecoration(
+          labelText: 'Toạ độ (vĩ độ, kinh độ)',
+          prefixIcon: Icon(Icons.my_location),
+          helperText: 'Google Maps: nhấn giữ vị trí bãi, chép dãy số hiện ra',
+        ),
       ),
       const SizedBox(height: 12),
       FilledButton.icon(onPressed: _saveSettings, icon: const Icon(Icons.save_outlined), label: const Text('Lưu cài đặt')),
@@ -185,14 +215,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               trailing: const Icon(Icons.chevron_right),
               onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ProfileScreen())),
             ),
-            if (u.role == 'admin')
-              ListTile(
-                leading: const Icon(Icons.manage_accounts_outlined),
-                title: const Text('Quản lý tài khoản'),
-                subtitle: const Text('Vai trò, khoá, gắn hồ sơ bảo vệ'),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const AccountsScreen())),
-              ),
+            const BioLockTile(),
           ],
           if (widget.onChangeRole != null)
             ListTile(leading: const Icon(Icons.swap_horiz), title: const Text('Đổi vai trò thiết bị'), onTap: widget.onChangeRole),

@@ -6,6 +6,8 @@
 	<string>Chụp biển số xe tại cổng</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Không ghi âm; plugin camera yêu cầu khai báo</string>
+	<key>NSFaceIDUsageDescription</key>
+	<string>Mở khoá ứng dụng bằng Face ID</string>
 	<key>NFCReaderUsageDescription</key>
 	<string>Đọc mã thẻ gửi xe khi thêm thẻ mới</string>
 	<key>NSPhotoLibraryUsageDescription</key>

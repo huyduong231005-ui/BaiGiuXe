@@ -12,6 +12,9 @@ if (missing.length) throw new Error(`Thiếu biến môi trường: ${missing.jo
 const SUPABASE_TOKEN_CACHE_MS = 5 * 60 * 1000;
 const SIGNED_URL_TTL_S = 3600;
 
+// Cột date (hạn vé tháng) giữ nguyên chuỗi 'YYYY-MM-DD': đổi sang Date theo múi giờ máy chủ dễ lệch 1 ngày.
+pg.types.setTypeParser(1082, (v) => v);
+
 // Chuỗi kết nối Session pooler của Supabase (IPv4): Render không ra được IPv6 nên không dùng db.<ref>.supabase.co.
 const db = new pg.Pool({ connectionString: env.DATABASE_URL, ssl: { rejectUnauthorized: false }, max: 5 });
 const google = new OAuth2Client();

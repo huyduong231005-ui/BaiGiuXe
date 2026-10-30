@@ -49,10 +49,38 @@ export function calcFee(inT, outT, settings, monthly = false) {
 
 const deny = (message) => ({ ok: false, open: false, message });
 
+/** "2026-10-30" -> ngày kế tiếp 00:00 giờ địa phương (vé dùng tới hết ngày đó). */
+const endOfDay = (ymd) => {
+  const [y, m, d] = String(ymd).slice(0, 10).split('-').map(Number);
+  return new Date(y, m - 1, d + 1);
+};
+
+/** Vé tháng còn hạn tại thời điểm now (valid_until null = không giới hạn). Giống monthlyValid trong app. */
+export function monthlyValid(card, now = new Date()) {
+  if (card?.kind !== 'monthly') return false;
+  return card.valid_until == null || new Date(now) < endOfDay(card.valid_until);
+}
+
+const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+/**
+ * Hạn mới khi duyệt đơn vé tháng: vé còn hạn thì cộng nối tiếp từ hạn cũ, hết hạn / chưa có thì tính từ hôm nay.
+ * VD hôm nay 30/10, mua 1 tháng -> dùng tới hết 29/11.
+ */
+export function extendUntil(currentUntil, months, now = new Date()) {
+  const today = ymd(now);
+  const from = currentUntil && String(currentUntil).slice(0, 10) >= today
+    ? endOfDay(currentUntil)
+    : new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  return ymd(new Date(from.getFullYear(), from.getMonth() + months, from.getDate() - 1));
+}
+
 /** Quyết định cho xe vào (cùng thứ tự kiểm tra với decideEntry trong app). */
-export function decideEntry({ card, hasOpenSession, free, plate, score = 1, candidates = [], parkedPlates = [] }) {
+export function decideEntry({ card, hasOpenSession, free, plate, score = 1, candidates = [], parkedPlates = [], now = new Date() }) {
   if (!card) return deny('The chua dang ky');
+  if (card.lost_at) return deny('The da bao mat');
   if (!card.active) return deny('The bi khoa');
+  if (card.kind === 'monthly' && !monthlyValid(card, now)) return deny('Ve thang het han');
   if (hasOpenSession) return deny('The dang gui xe');
   if (free <= 0) return deny('Bai da day');
   if (!normPlate(plate)) return deny('Khong doc duoc bien');
@@ -66,11 +94,12 @@ export function decideEntry({ card, hasOpenSession, free, plate, score = 1, cand
 /** Quyết định cho xe ra: biển ra phải khớp biển lúc vào, kèm phí. */
 export function decideExit({ card, session, plate, candidates = [], now, settings }) {
   if (!session) return deny('Khong co luot gui');
+  if (card?.lost_at) return deny('The da bao mat');
   if (!normPlate(plate)) return deny('Khong doc duoc bien');
   if (!session.plate_in) return deny('Thieu bien luc vao');
   const ok = samePlate(session.plate_in, plate) || candidates.some((c) => samePlate(session.plate_in, c));
   if (!ok) return deny('Sai bien so');
-  const fee = calcFee(session.time_in, now, settings, card?.kind === 'monthly');
+  const fee = calcFee(session.time_in, now, settings, monthlyValid(card, now));
   return { ok: true, open: true, message: `Phi: ${fee}d`, fee };
 }
 

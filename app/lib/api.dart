@@ -35,10 +35,11 @@ class ApiUser {
 
   final int? id;
   final String username, email, fullName;
-  final String role; // admin | manager | guard
+  final String role; // admin | manager | guard | customer (chủ vé tháng)
   final int? guardId;
 
   bool get isStaff => role == 'admin' || role == 'manager';
+  bool get isCustomer => role == 'customer';
   String get displayName => fullName.isEmpty ? username : fullName;
 }
 

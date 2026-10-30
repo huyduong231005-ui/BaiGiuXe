@@ -205,4 +205,37 @@ void main() {
     expect(oledName('  Lê Thị Ưởng  '), 'Uong');
     expect(oledName('Hùng'), 'Hung');
   });
+
+  group('vé tháng có hạn, thẻ báo mất', () {
+    const cfg = FeeConfig(priceDay: 3000, priceNight: 5000, nightMarkMinutes: 22 * 60);
+    final now = DateTime(2026, 10, 30, 9);
+    Rec monthly([String? until]) => {'active': true, 'kind': 'monthly', 'plate': '59X112345', 'valid_until': until};
+    Decision entry(Rec card) =>
+        decideEntry(card: card, hasOpenSession: false, free: 5, plate: '59X112345', score: 0.95, now: now);
+
+    test('còn hạn tới hết ngày valid_until', () {
+      expect(entry(monthly('2026-10-30')).ok, isTrue);
+      expect(monthlyValid(monthly('2026-10-30'), DateTime(2026, 10, 30, 23, 59)), isTrue);
+      expect(entry(monthly()).ok, isTrue); // không ghi hạn = không giới hạn
+    });
+
+    test('hết hạn -> không cho vào', () {
+      expect(entry(monthly('2026-10-29')).message, 'Ve thang het han');
+    });
+
+    test('hết hạn trong lúc đang gửi -> lúc ra tính phí như vé lượt', () {
+      final session = {'plate_in': '59X112345', 'time_in': DateTime(2026, 10, 29, 8).toIso8601String()};
+      expect(feeFor(session, monthly('2026-10-29'), now, cfg), 5000);
+      expect(feeFor(session, monthly('2026-11-29'), now, cfg), 0);
+    });
+
+    test('thẻ đã báo mất: từ chối cả lúc vào và lúc ra', () {
+      final lost = {...monthly('2026-12-31'), 'lost_at': '2026-10-30T01:00:00Z'};
+      expect(entry(lost).message, 'The da bao mat');
+      final d = decideExit(
+          card: lost, session: {'plate_in': '59X112345', 'time_in': '2026-10-30T00:00:00Z'}, plateOut: '59X112345',
+          now: now, cfg: cfg);
+      expect((d.ok, d.open, d.message), (false, false, 'The da bao mat'));
+    });
+  });
 }

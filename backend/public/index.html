@@ -85,6 +85,18 @@
     <tr><td class="m GET">GET</td><td class="p">/me/attendance</td><td>Bảng công của chính bảo vệ đang đăng nhập</td><td class="r">bảo vệ</td></tr>
   </table>
 
+  <h2>Khách hàng (chủ vé tháng)</h2>
+  <table>
+    <tr><td class="m GET">GET</td><td class="p">/lot</td><td>Tên, địa chỉ, toạ độ bãi (bản đồ, chỉ đường), bảng giá, chỗ trống</td><td class="r">công khai</td></tr>
+    <tr><td class="m GET">GET</td><td class="p">/me/cards</td><td>Thẻ của tôi: hạn vé tháng, xe đang gửi, phí nếu ra bây giờ</td><td class="r">khách</td></tr>
+    <tr><td class="m POST">POST</td><td class="p">/me/cards/:uid/lost</td><td>Báo mất thẻ: khoá ngay, cổng chặn cả lúc vào lẫn lúc ra</td><td class="r">khách</td></tr>
+    <tr><td class="m GET">GET</td><td class="p">/me/cards/:uid/qr</td><td>Mã QR vé xe ký số, hết hạn 10 phút, không lộ UID thẻ</td><td class="r">khách</td></tr>
+    <tr><td class="m GET">GET</td><td class="p">/me/sessions · /me/plates/url</td><td>Lịch sử ra vào của xe tôi, kèm ảnh biển lúc vào / ra</td><td class="r">khách</td></tr>
+    <tr><td class="m POST">POST</td><td class="p">/me/requests</td><td>Đơn đăng ký / gia hạn vé tháng · GET · PATCH /:id · DELETE /:id (khi đang chờ)</td><td class="r">khách</td></tr>
+    <tr><td class="m GET">GET</td><td class="p">/requests</td><td>Đơn vé tháng · POST /:id/approve (gia hạn hoặc gán thẻ RFID) · POST /:id/reject</td><td class="r">quản lý</td></tr>
+    <tr><td class="m GET">GET</td><td class="p">/sessions/by-ticket</td><td>Quét QR vé của khách → xe đang gửi, hạn vé, phí</td><td class="r">quản lý</td></tr>
+  </table>
+
   <h2>Quản trị</h2>
   <table>
     <tr><td class="m GET">GET</td><td class="p">/admin/users</td><td>Tài khoản (?q=, ?role=) · PATCH /:id đổi vai trò, khoá, gắn hồ sơ bảo vệ · DELETE /:id</td><td class="r">admin</td></tr>

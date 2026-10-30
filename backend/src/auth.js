@@ -7,7 +7,7 @@ const OTP_TTL_MS = 5 * 60 * 1000;
 const OTP_RESEND_MS = 30 * 1000; // chống spam email / đốt hạn mức 300 mail/ngày của Brevo
 const OTP_MAX_ATTEMPTS = 5;
 const TOKEN_TTL = '7d';
-export const ROLES = ['admin', 'manager', 'guard'];
+export const ROLES = ['admin', 'manager', 'guard', 'customer'];
 export const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 export const USERNAME_RE = /^[a-z0-9_.]{3,30}$/;
 export const MIN_PASSWORD = 6;
@@ -121,7 +121,7 @@ export function authRouter({ db, sendMail, verifyGoogle, jwtSecret }) {
     await db.query('delete from otps where user_id = $1 and purpose = $2', [user.id, purpose]);
   }
 
-  // Tài khoản tự đăng ký có vai trò bảo vệ (chỉ xem bãi và bảng công của mình); admin nâng quyền sau.
+  // Tài khoản tự đăng ký là khách hàng (chủ vé tháng); quản lý / bảo vệ do admin cấp quyền.
   router.post('/register', async (req, res) => {
     const email = str(req.body?.email).toLowerCase();
     const username = str(req.body?.username).toLowerCase();
