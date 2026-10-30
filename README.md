@@ -17,6 +17,23 @@ REST API: https://bai-giu-xe-api.onrender.com (danh sách API, số chỗ trốn
 | `app/` | Flutter (Android / iOS / macOS). Một app: Quản lý, Khách hàng (vé tháng), Bảo vệ, và chế độ Thiết bị camera (cổng vào / ra / cả 2) |
 | `firmware/` | PlatformIO cho ESP32 DevKit V1 (`src/main.cpp` firmware chính, `src/hwtest.cpp` thử phần cứng) |
 
+## Bãi xe chung cư: tính năng chính
+
+| Tính năng | Cách chạy |
+|---|---|
+| **Sơ đồ bãi + chỉ ô cho khách** | Quản lý vẽ khu (lưới hàng × cột, loại xe, thứ tự gần cổng) ở tab **Sơ đồ**, gán ô riêng cho cư dân thuê vé tháng. Khách vãng lai quẹt thẻ lượt: API (`/gate/scan`) chọn ô trống gần cổng nhất, đúng loại xe (Plate Recognizer nhận ra xe máy / ô tô), không đụng ô cư dân; OLED hiện `Moi vao o A-02`. Hết ô thì từ chối `Het cho xe may`. |
+| **Giá theo loại xe** | Cài đặt → Loại xe & bảng giá (thêm / sửa / xoá). Mặc định tham khảo chung cư TP.HCM: xe máy 5.000đ lượt / 10.000đ qua đêm / 150.000đ tháng; ô tô 25.000 / 50.000 / 1.500.000đ; xe đạp 2.000 / 5.000 / 100.000đ. |
+| **Doanh thu** | Tab riêng: 30 ngày hoặc 12 tháng, tách vé lượt (phí lúc xe ra) và vé tháng (ghi khi duyệt đơn), theo loại xe, xuất Excel. |
+| **Tốc độ + độ chính xác nhận diện biển** | Khác → Nhận diện biển số: thời gian OCR / tổng (trung bình, trung vị, p95), tỉ lệ đọc được, đọc rõ ngay lần đầu, biển ra khớp biển vào, lý do từ chối. Số đo lấy từ từng lượt quẹt thật. |
+| **Mất mạng / mất điện** | ESP32 lưu danh sách thẻ tháng trong flash: mất ĐT hoặc mất mạng thì cư dân vẫn qua, mọi lượt ghi kèm giờ DS3231 rồi gửi bù (`/gate/offline`, không ghi trùng). ĐT camera mất API cũng tự cho thẻ tháng qua và xếp hàng chờ gửi bù. Dữ liệu ở MongoDB Atlas (3 bản sao) nên mất điện tại bãi không mất lịch sử. Phần cứng nên có UPS mini cho router + nguồn ESP32; barrier nâng tay được. |
+| **3/6 chức năng tự chọn** | **e** NFC (thêm thẻ bằng NFC điện thoại) + QR vé tháng + khoá app bằng vân tay · **f** ảnh chụp → nhận diện biển + loại xe · **b** chia sẻ vị trí: cư dân xem ô của mình trên sơ đồ, khoảng cách GPS tới bãi, "Chia sẻ vị trí xe" gửi bãi + ô + link bản đồ cho người nhà. |
+
+### Thử chế độ offline với phần cứng thật
+1. Mở app trên ĐT cổng ra (vai trò cổng ra / cả 2 cổng) một lần để ESP32 nhận danh sách thẻ tháng (Serial in `[offline] da luu N the thang`).
+2. Tắt app ĐT camera (hoặc tắt WiFi điện thoại). OLED dòng vàng hiện `Mat DT: the thang OK`.
+3. Quẹt thẻ tháng ở cổng ra: barrier mở, OLED `CU DAN / Offline - moi qua`. Quẹt thẻ lượt: `TU CHOI / Mat mang - goi BV`.
+4. Mở lại app ĐT: OLED hiện `Gui bu: N luot` rồi về 0; app quản lý thấy lượt ra / vào có ghi chú "ghi bù lúc mất mạng".
+
 ## 1. MongoDB Atlas
 
 1. Tạo cluster free (M0), **Database Access** tạo user, **Network Access** cho phép `0.0.0.0/0` (Render không có IP cố định).
@@ -31,7 +48,7 @@ REST API: https://bai-giu-xe-api.onrender.com (danh sách API, số chỗ trốn
 
 ```bash
 cd backend
-npm test                 # 41 test, MongoDB trong bộ nhớ (mongodb-memory-server)
+npm test                 # 47 test, MongoDB trong bộ nhớ (mongodb-memory-server)
 cp .env.example .env     # điền MONGODB_URI, JWT_SECRET, PLATE_TOKEN, GOOGLE_CLIENT_ID, BREVO_API_KEY, MAIL_FROM
 npm run dev
 npm run seed-demo        # tài khoản + thẻ + lượt gửi + bảng công mẫu để demo (xoá: npm run seed-demo -- --remove)
@@ -117,6 +134,5 @@ pio run -t upload && pio device monitor
 `app/dart_defines.json` và `firmware/src/secrets.h` **đang được đưa lên repo** (mật khẩu WiFi, mật khẩu MQTT). Nếu repo để công khai, hãy đổi các mật khẩu/token này định kỳ, hoặc đưa 2 file trở lại `.gitignore` và chỉ giữ file mẫu.
 
 ## Chưa làm (có chủ đích)
-- Hàng đợi offline khi mất internet (vân tay đã đăng ký và nút khẩn cấp vẫn mở cổng được).
 - Giữ ảnh biển số lâu hơn 90 ngày (ảnh lưu trong MongoDB, tự xoá sau 90 ngày để không đầy 512MB của Atlas free).
 - Sửa / xoá tay một lượt chấm công trong bảng công.

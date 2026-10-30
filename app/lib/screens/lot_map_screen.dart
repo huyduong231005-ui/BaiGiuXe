@@ -254,7 +254,7 @@ class _TypeSummary extends StatelessWidget {
       for (final e in by.entries)
         Chip(
           avatar: Icon(vehicleIcon(e.key), size: 18, color: s.primary),
-          label: Text('${vehicleName(e.key)}: ${e.value.visitor} ô khách trống · ${e.value.free}/${e.value.total} chưa có xe'),
+          label: Text('${vehicleName(e.key)}: ${e.value.visitor} ô khách trống · ${e.value.total} ô'),
         ),
     ]);
   }
