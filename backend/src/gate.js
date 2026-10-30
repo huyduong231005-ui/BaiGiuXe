@@ -3,25 +3,34 @@
 // 2 dòng chữ cho OLED (ASCII không dấu, tối đa 21 ký tự) để ĐT gửi thẳng cho ESP32.
 import express, { Router } from 'express';
 import { HttpError, str } from './auth.js';
-import { Attendance, Card, GateEvent, Guard, insert, PlateImage, row, Session, ShiftDef } from './db.js';
+import { Attendance, Card, GateEvent, Guard, insert, PlateImage, row, Session, ShiftDef, Slot } from './db.js';
 import { findGuard } from './guards.js';
-import { closeSession, feeNow, getSettings, parkingStatus } from './parking.js';
+import { closeSession, feeNow, parkingStatus, sessionPrice, ymd } from './parking.js';
+import { assignSlot, vehicleFromOcr, vehicleTypes } from './lot.js';
 import { IMG_PATH_RE } from './plates.js';
-import { decideEntry, decideExit, hm, MAX_SHIFT_MS, nearestShift, normPlate, oledName } from './rules.js';
+import { calcFee, decideEntry, decideExit, hm, MAX_SHIFT_MS, monthlyValid, nearestShift, normPlate, oledName } from './rules.js';
 
 const MAX_IMAGE = '2mb';
 const COMMAND_TTL_MS = 30_000; // lệnh mở cổng cũ hơn 30 giây thì bỏ (ĐT cổng ra mất mạng lúc đó)
 const DUPLICATE_KEY = 11000;
 
 const log = (data) => insert(GateEvent, { gate: 'out', status: 'done', ...data });
+const num = (v) => (Number.isFinite(v) ? Math.round(v) : null);
 const plateRead = (b) => ({
   plate: normPlate(b?.plate) || null,
   score: typeof b?.score === 'number' ? b.score : 0,
   candidates: Array.isArray(b?.candidates) ? b.candidates.map(normPlate).filter(Boolean) : [],
   img: IMG_PATH_RE.test(str(b?.img)) ? str(b.img) : null,
+  vehicle: vehicleFromOcr(str(b?.vehicle)) ?? (str(b?.vehicle) || null), // 'Motorcycle'/'Sedan'... hoặc code sẵn
 });
 
-/** Xe vào: kiểm tra rồi mở lượt gửi. Trùng index (2 lượt quẹt cùng lúc) thì coi như xe đã trong bãi. */
+// Tên ngắn không dấu cho OLED khi hết chỗ
+const SHORT = { motorbike: 'xe may', car: 'o to', bicycle: 'xe dap' };
+
+/**
+ * Xe vào: kiểm tra, chọn ô (cư dân về ô riêng; khách vãng lai vào ô trống gần cổng nhất, đúng loại xe), mở lượt gửi.
+ * Trùng index (2 lượt quẹt cùng lúc) thì coi như xe đã trong bãi.
+ */
 async function enter(uid, read, now) {
   const [card, open, status, parked] = await Promise.all([
     Card.findOne({ uid }).lean(),
@@ -32,24 +41,69 @@ async function enter(uid, read, now) {
   const d = decideEntry({ card, hasOpenSession: Boolean(open), free: status.free, ...read,
     parkedPlates: parked.map((s) => s.plate_in), now });
   if (!d.ok) return d;
+  const types = await vehicleTypes();
+  const vehicleType = card.kind === 'monthly' && card.vehicle_type ? card.vehicle_type
+    : types[read.vehicle] ? read.vehicle : 'motorbike'; // ponytail: OCR không nhận ra loại xe thì coi là xe máy
+  const slot = await assignSlot(card, vehicleType);
+  if (slot?.full) return { ok: false, open: false, message: `Het cho ${SHORT[vehicleType] ?? vehicleType}`, vehicleType };
   try {
-    await insert(Session, { card_uid: uid, plate_in: read.plate, img_in: read.img, time_in: now });
+    await insert(Session, { card_uid: uid, plate_in: read.plate, img_in: read.img, time_in: now, vehicle_type: vehicleType,
+      slot_code: slot?.code ?? null });
   } catch (err) {
     if (err.code !== DUPLICATE_KEY) throw err;
     return { ok: false, open: false, message: 'Xe da o trong bai' };
   }
-  return d;
+  return slot ? { ...d, message: `Moi vao o ${slot.code}`, slot: slot.code, vehicleType } : { ...d, vehicleType };
 }
 
 /** Xe ra: biển ra phải khớp biển lúc vào, đóng lượt kèm phí. */
 async function leave(uid, read, now) {
-  const [card, session, settings] = await Promise.all([
-    Card.findOne({ uid }).lean(), Session.findOne({ card_uid: uid, parked: true }).lean(), getSettings(),
-  ]);
+  const [card, session] = await Promise.all([Card.findOne({ uid }).lean(), Session.findOne({ card_uid: uid, parked: true }).lean()]);
+  const settings = session ? await sessionPrice(session) : null;
   const d = decideExit({ card, session, ...read, now, settings });
   if (!d.ok) return d;
   const closed = await closeSession(session._id, { plate_out: read.plate, img_out: read.img, fee: d.fee });
-  return closed ? d : { ok: false, open: false, message: 'Luot gui da dong' };
+  return closed ? { ...d, slot: session.slot_code, vehicleType: session.vehicle_type } : { ok: false, open: false, message: 'Luot gui da dong' };
+}
+
+const MAX_OFFLINE_EVENTS = 500;
+const MAX_WHITELIST = 300; // ESP32 lưu trong flash (NVS), ~30 byte mỗi thẻ
+
+/** Giờ ESP32 (DS3231 chạy giờ địa phương, gửi dạng epoch "giả UTC") -> Date thật. */
+const fromEspTime = (ts) => new Date((ts + new Date().getTimezoneOffset() * 60) * 1000);
+
+/** Một lượt ghi bù từ ESP32 lúc mất mạng: mở / đóng lượt gửi của thẻ tháng, ghi nhật ký. Trả true nếu ghi mới. */
+async function applyOffline(ev) {
+  const at = fromEspTime(Number(ev.ts));
+  if (!Number.isFinite(+at) || at > new Date(Date.now() + 60e3)) return false;
+  const uid = str(ev.uid).toUpperCase() || null;
+  const key = `${ev.t}:${uid ?? ev.by ?? '-'}:${ev.ts}`;
+  if (await GateEvent.exists({ offline_key: key })) return false;
+  const gate = ev.t === 'in' ? 'in' : 'out';
+  let message = 'Offline: ';
+  if (uid) {
+    const card = await Card.findOne({ uid }).lean();
+    const open = await Session.findOne({ card_uid: uid, parked: true }).lean();
+    if (ev.t === 'in' && card && !open) {
+      const slot = await Slot.findOne({ card_uid: uid }).lean();
+      await insert(Session, { card_uid: uid, plate_in: card.plate, time_in: at, vehicle_type: card.vehicle_type ?? 'motorbike',
+        slot_code: slot?.code ?? null, offline: true }).catch(() => null); // trùng biển đang gửi thì bỏ qua lượt mở
+      message += `vao bang the thang ${uid}`;
+    } else if (ev.t === 'out' && open && at >= open.time_in) {
+      const fee = calcFee(open.time_in, at, await sessionPrice(open), monthlyValid(card, at));
+      await Session.updateOne({ _id: open._id, parked: true },
+        { time_out: at, fee, plate_out: card?.plate ?? null, parked: false, offline: true });
+      message += `ra bang the ${uid}, phi ${fee}d`;
+    } else {
+      message += `${ev.t === 'in' ? 'vao' : 'ra'} the ${uid} (khong co luot de ghi)`;
+    }
+  } else {
+    message += ev.by === 'emg' ? 'mo bang nut khan cap' : `bao ve mo bang van tay #${ev.guard ?? '?'}`;
+  }
+  await insert(GateEvent, { gate, kind: uid ? 'scan' : ev.by === 'emg' ? 'emergency' : 'override', uid, status: 'done',
+    message, open: gate === 'out', guard_id: Number.isInteger(ev.guard) ? ev.guard : null, offline_key: key, created_at: at })
+    .catch((err) => { if (err.code !== DUPLICATE_KEY) throw err; });
+  return true;
 }
 
 export function gateRouter() {
@@ -64,8 +118,10 @@ export function gateRouter() {
     const read = plateRead(req.body);
     const now = new Date();
     const d = await (gate === 'in' ? enter : leave)(uid, read, now);
+    const b = req.body;
     await insert(GateEvent, { gate, kind: 'scan', uid, status: d.ok ? 'ok' : 'denied', plate: read.plate, img: read.img,
-      message: d.message, open: d.open });
+      message: d.message, open: d.open, ocr_ms: num(b.ocrMs), total_ms: num(b.totalMs), shots: num(b.shots),
+      score: read.plate ? read.score : null, vehicle_type: d.vehicleType ?? read.vehicle, slot_code: d.slot ?? null });
     res.json({ ...d, l1: read.plate ?? (d.ok ? 'OK' : 'TU CHOI'), l2: d.message, status: await parkingStatus() });
   });
 
@@ -152,6 +208,25 @@ export function gateRouter() {
     const e = await GateEvent.findOneAndUpdate({ _id: Number(req.params.id) || 0, kind: 'open_cmd' }, { status: 'done' }, { returnDocument: 'after' }).lean();
     if (!e) throw new HttpError(404, 'Không có lệnh này');
     res.json(row(e));
+  });
+
+  // Thẻ tháng còn hiệu lực để ESP32 lưu sẵn: mất mạng / mất ĐT camera thì cư dân vẫn ra vào được.
+  // d = hạn dùng YYYYMMDD (0 = không hạn), ESP32 tự so với giờ DS3231.
+  router.get('/gate/whitelist', async (_req, res) => {
+    const today = ymd(new Date());
+    const cards = await Card.find({ kind: 'monthly', active: true, lost_at: null,
+      $or: [{ valid_until: null }, { valid_until: { $gte: today } }] }, { uid: 1, valid_until: 1 })
+      .sort({ uid: 1 }).limit(MAX_WHITELIST).lean();
+    res.json(cards.map((c) => ({ u: c.uid, d: c.valid_until ? Number(c.valid_until.replaceAll('-', '')) : 0 })));
+  });
+
+  // ESP32 gửi bù các lượt ghi lúc mất mạng (qua ĐT camera khi có mạng lại). Gửi lại nhiều lần không bị ghi trùng.
+  router.post('/gate/offline', async (req, res) => {
+    const events = Array.isArray(req.body?.events) ? req.body.events.slice(0, MAX_OFFLINE_EVENTS) : null;
+    if (!events) throw new HttpError(400, 'Cần mảng events');
+    let applied = 0;
+    for (const ev of events.sort((a, b) => a.ts - b.ts)) if (await applyOffline(ev)) applied++;
+    res.json({ received: events.length, applied });
   });
 
   // Ảnh lượt quẹt (đã thu nhỏ), tải lên sau khi cổng đã có kết quả.

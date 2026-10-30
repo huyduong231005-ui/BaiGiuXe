@@ -36,13 +36,13 @@ export function imageRouter({ jwtSecret }) {
   return router;
 }
 
-/** Kết quả Plate Recognizer -> biển có độ tin cậy cao nhất + các phương án đọc khác (giống recognize() trong app). */
+/** Kết quả Plate Recognizer -> biển có độ tin cậy cao nhất + các phương án đọc khác + loại phương tiện. */
 export function bestPlate(results) {
-  if (!results?.length) return { plate: null, score: 0, candidates: [] };
+  if (!results?.length) return { plate: null, score: 0, candidates: [], vehicle: null };
   const best = results.reduce((a, b) => (a.score >= b.score ? a : b));
   const plate = normPlate(best.plate);
   const candidates = (best.candidates ?? []).map((c) => normPlate(c.plate));
-  return { plate, score: best.score, candidates: candidates.length ? candidates : [plate] };
+  return { plate, score: best.score, candidates: candidates.length ? candidates : [plate], vehicle: best.vehicle?.type ?? null };
 }
 
 export function platesRouter({ plateToken, fetchFn = fetch, jwtSecret }) {

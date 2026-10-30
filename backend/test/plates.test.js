@@ -11,7 +11,7 @@ before(async () => {
       sent.push({ url, auth: init.headers.authorization, form: init.body });
       return Response.json({ results: [
         { plate: '59x112345', score: 0.71, candidates: [] },
-        { plate: '30a99999', score: 0.98, candidates: [{ plate: '30a99999' }, { plate: '30a99998' }] },
+        { plate: '30a99999', score: 0.98, vehicle: { type: 'Sedan' }, candidates: [{ plate: '30a99999' }, { plate: '30a99998' }] },
       ] });
     },
   });
@@ -20,15 +20,15 @@ before(async () => {
 after(() => ctx.close());
 
 test('bestPlate lấy biển tin cậy cao nhất, chuẩn hoá kèm các phương án', () => {
-  assert.deepEqual(bestPlate([]), { plate: null, score: 0, candidates: [] });
-  assert.deepEqual(bestPlate([{ plate: 'ab-1', score: 0.9 }]), { plate: 'AB1', score: 0.9, candidates: ['AB1'] });
+  assert.deepEqual(bestPlate([]), { plate: null, score: 0, candidates: [], vehicle: null });
+  assert.deepEqual(bestPlate([{ plate: 'ab-1', score: 0.9 }]), { plate: 'AB1', score: 0.9, candidates: ['AB1'], vehicle: null });
 });
 
 test('nhận diện biển: gửi ảnh qua API, token Plate Recognizer chỉ nằm ở máy chủ', async () => {
   const r = await ctx.call('POST', '/plates/recognize', {
     token, raw: new Uint8Array([0xff, 0xd8, 0xff]), headers: { 'content-type': 'image/jpeg' } });
   assert.equal(r.status, 200);
-  assert.deepEqual(r.body, { plate: '30A99999', score: 0.98, candidates: ['30A99999', '30A99998'] });
+  assert.deepEqual(r.body, { plate: '30A99999', score: 0.98, candidates: ['30A99999', '30A99998'], vehicle: 'Sedan' });
   assert.equal(sent[0].auth, 'Token plate-token');
   assert.equal(sent[0].form.get('regions'), 'vn');
 

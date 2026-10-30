@@ -3,8 +3,9 @@
 import { Router } from 'express';
 import jwt from 'jsonwebtoken';
 import { HttpError, str } from './auth.js';
-import { Card, insert, row, Session, TicketRequest, User } from './db.js';
+import { Card, insert, Payment, row, Session, Slot, TicketRequest, User } from './db.js';
 import { getSettings, TICKET_AUDIENCE, withJoins } from './parking.js';
+import { priceOf, vehicleTypes } from './lot.js';
 import { IMG_PATH_RE, imageUrl } from './plates.js';
 import { calcFee, extendUntil, monthlyValid, normPlate } from './rules.js';
 
@@ -16,14 +17,20 @@ const MAX_HISTORY = 100;
 
 const myCard = (uid, userId) => Card.findOne({ uid: String(uid).toUpperCase(), user_id: userId }).lean();
 
-function requestInput(body) {
+const MAX_APARTMENT = 20;
+
+async function requestInput(body) {
   const plate = normPlate(body?.plate);
   const ownerName = str(body?.ownerName);
   const months = body?.months;
+  const vehicleType = str(body?.vehicleType) || 'motorbike';
+  const apartment = str(body?.apartment).toUpperCase().slice(0, MAX_APARTMENT);
   if (!PLATE_RE.test(plate)) throw new HttpError(400, 'Biển số 5-12 ký tự chữ và số');
   if (!ownerName) throw new HttpError(400, 'Cần nhập tên chủ xe');
   if (!Number.isInteger(months) || months < 1 || months > 12) throw new HttpError(400, 'Số tháng từ 1 đến 12');
-  return { plate, owner_name: ownerName, months, note: str(body?.note).slice(0, 300) || null };
+  if (!(await vehicleTypes())[vehicleType]) throw new HttpError(400, 'Loại xe không hợp lệ');
+  if (!apartment) throw new HttpError(400, 'Cần nhập căn hộ (VD: A1-12.05)');
+  return { plate, owner_name: ownerName, months, vehicle_type: vehicleType, apartment, note: str(body?.note).slice(0, 300) || null };
 }
 
 export function customerRouter({ jwtSecret }) {
@@ -32,17 +39,22 @@ export function customerRouter({ jwtSecret }) {
   // Thẻ của tôi, kèm xe đang gửi (nếu có) và phí nếu ra bây giờ.
   router.get('/me/cards', async (req, res) => {
     const cards = await Card.find({ user_id: req.user.id }).sort({ created_at: 1 }).lean();
-    const parked = await Session.find({ card_uid: { $in: cards.map((c) => c.uid) }, parked: true }).lean();
+    const uids = cards.map((c) => c.uid);
+    const [parked, slots] = await Promise.all([
+      Session.find({ card_uid: { $in: uids }, parked: true }).lean(), Slot.find({ card_uid: { $in: uids } }).lean(),
+    ]);
     const byUid = new Map(parked.map((s) => [s.card_uid, s]));
-    const settings = await getSettings();
+    const slotOf = new Map(slots.map((s) => [s.card_uid, s.code]));
+    const [settings, types] = await Promise.all([getSettings(), vehicleTypes()]);
     const now = new Date();
     res.json(cards.map((c) => {
       const s = byUid.get(c.uid);
       return {
         ...row(c),
         session_id: s?._id ?? null, parked_plate: s?.plate_in ?? null, parked_since: s?.time_in ?? null, parked_img: s?.img_in ?? null,
+        slot_code: slotOf.get(c.uid) ?? null, parked_slot: s?.slot_code ?? null,
         valid: c.kind !== 'monthly' || monthlyValid(c, now),
-        fee_now: s ? calcFee(s.time_in, now, settings, monthlyValid(c, now)) : null,
+        fee_now: s ? calcFee(s.time_in, now, priceOf(settings, types, s.vehicle_type), monthlyValid(c, now)) : null,
       };
     }));
   });
@@ -84,7 +96,7 @@ export function customerRouter({ jwtSecret }) {
   });
 
   router.post('/me/requests', async (req, res) => {
-    const r = requestInput(req.body);
+    const r = await requestInput(req.body);
     const cardUid = req.body?.cardUid ? String(req.body.cardUid).toUpperCase() : null;
     if (cardUid && !(await myCard(cardUid, req.user.id))) throw new HttpError(400, 'Chỉ gia hạn được thẻ của chính bạn');
     const n = await TicketRequest.countDocuments({ user_id: req.user.id, status: 'pending' });
@@ -93,7 +105,7 @@ export function customerRouter({ jwtSecret }) {
   });
 
   router.patch('/me/requests/:id', async (req, res) => {
-    const r = requestInput(req.body);
+    const r = await requestInput(req.body);
     const saved = await TicketRequest.findOneAndUpdate(
       { _id: Number(req.params.id) || 0, user_id: req.user.id, status: 'pending' }, r, { returnDocument: 'after' }).lean();
     if (!saved) throw new HttpError(409, 'Chỉ sửa được đơn đang chờ duyệt của bạn');
@@ -146,7 +158,12 @@ export function requestsRouter() {
     const until = extendUntil(card?.kind === 'monthly' ? card.valid_until : null, r.months);
     const saved = await Card.findOneAndUpdate({ uid }, {
       kind: 'monthly', plate: r.plate, owner: r.owner_name, active: true, user_id: r.user_id, valid_until: until, lost_at: null,
+      vehicle_type: r.vehicle_type, apartment: r.apartment,
     }, { returnDocument: 'after', upsert: true, setDefaultsOnInsert: true }).lean();
+    // Ghi khoản thu vé tháng (doanh thu theo tháng). Ô đậu riêng do quản lý gán trên sơ đồ bãi.
+    const price = (await vehicleTypes())[r.vehicle_type]?.price_month ?? 0;
+    await insert(Payment, { kind: 'monthly', amount: price * r.months, card_uid: uid, user_id: r.user_id, request_id: r.id,
+      months: r.months, vehicle_type: r.vehicle_type });
     const done = await TicketRequest.findByIdAndUpdate(r.id, {
       status: 'approved', card_uid: uid, reply: str(req.body?.reply) || null, handled_by: req.user.id, handled_at: new Date(),
     }, { returnDocument: 'after' }).lean();

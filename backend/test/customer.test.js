@@ -34,13 +34,15 @@ test('cổng: vé tháng hết hạn không cho vào; thẻ báo mất bị ch�
 });
 
 test('khách gửi đơn vé tháng -> sửa -> quản lý duyệt, gán thẻ -> thẻ hiện trong app khách', async () => {
-  const bad = await ctx.call('POST', '/me/requests', { token: khach, body: { plate: '59', ownerName: 'An', months: 1 } });
+  const bad = await ctx.call('POST', '/me/requests', { token: khach, body: { plate: '59', ownerName: 'An', months: 1, apartment: 'A1-12.05' } });
   assert.equal(bad.status, 400);
-  const r = await ctx.call('POST', '/me/requests', { token: khach, body: { plate: '59x1-123.45', ownerName: 'An', months: 1 } });
+  const r0 = await ctx.call('POST', '/me/requests', { token: khach, body: { plate: '59x1-123.45', ownerName: 'An', months: 1 } });
+  assert.equal(r0.status, 400); // thiếu căn hộ
+  const r = await ctx.call('POST', '/me/requests', { token: khach, body: { plate: '59x1-123.45', ownerName: 'An', months: 1, apartment: 'A1-12.05' } });
   assert.deepEqual([r.status, r.body.plate, r.body.status], [201, '59X112345', 'pending']);
-  const e = await ctx.call('PATCH', `/me/requests/${r.body.id}`, { token: khach, body: { plate: '59X112345', ownerName: 'Nguyễn An', months: 3 } });
+  const e = await ctx.call('PATCH', `/me/requests/${r.body.id}`, { token: khach, body: { plate: '59X112345', ownerName: 'Nguyễn An', months: 3, apartment: 'a1-12.05' } });
   assert.equal(e.body.months, 3);
-  assert.equal((await ctx.call('PATCH', `/me/requests/${r.body.id}`, { token: khac, body: { plate: '59X112345', ownerName: 'X', months: 1 } })).status, 409);
+  assert.equal((await ctx.call('PATCH', `/me/requests/${r.body.id}`, { token: khac, body: { plate: '59X112345', ownerName: 'X', months: 1, apartment: 'B2' } })).status, 409);
 
   // Khách không vào được API của quản lý, quản lý không vào được /me/requests
   assert.equal((await ctx.call('GET', '/requests', { token: khach })).status, 403);
@@ -63,13 +65,13 @@ test('khách gửi đơn vé tháng -> sửa -> quản lý duyệt, gán thẻ -
 
 test('gia hạn thẻ đang dùng: hạn mới nối tiếp hạn cũ; thẻ của khách khác thì không gán được', async () => {
   await ctx.db.Card.updateOne({ uid: 'A1B2C3D4' }, { valid_until: ymd(new Date(Date.now() + 10 * 864e5)) });
-  const r = await ctx.call('POST', '/me/requests', { token: khach, body: { plate: '59X112345', ownerName: 'An', months: 1, cardUid: 'A1B2C3D4' } });
-  assert.equal((await ctx.call('POST', '/me/requests', { token: khac, body: { plate: '59X112345', ownerName: 'X', months: 1, cardUid: 'A1B2C3D4' } })).status, 400);
+  const r = await ctx.call('POST', '/me/requests', { token: khach, body: { plate: '59X112345', ownerName: 'An', months: 1, cardUid: 'A1B2C3D4', apartment: 'A1-12.05' } });
+  assert.equal((await ctx.call('POST', '/me/requests', { token: khac, body: { plate: '59X112345', ownerName: 'X', months: 1, cardUid: 'A1B2C3D4', apartment: 'B2' } })).status, 400);
   const before = (await ctx.db.Card.findOne({ uid: 'A1B2C3D4' }).lean()).valid_until;
   const ok = await ctx.call('POST', `/requests/${r.body.id}/approve`, { token: manager, body: {} });
   assert.equal(ok.body.card.valid_until, extendUntil(before, 1));
 
-  const r2 = await ctx.call('POST', '/me/requests', { token: khac, body: { plate: '30A99999', ownerName: 'Bình', months: 1 } });
+  const r2 = await ctx.call('POST', '/me/requests', { token: khac, body: { plate: '30A99999', ownerName: 'Bình', months: 1, apartment: 'B2-03.01' } });
   assert.equal((await ctx.call('POST', `/requests/${r2.body.id}/approve`, { token: manager, body: { cardUid: 'A1B2C3D4' } })).status, 409);
   const rej = await ctx.call('POST', `/requests/${r2.body.id}/reject`, { token: manager, body: { reply: 'Bãi hết chỗ vé tháng' } });
   assert.deepEqual([rej.body.status, rej.body.reply], ['rejected', 'Bãi hết chỗ vé tháng']);

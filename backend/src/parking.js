@@ -2,15 +2,15 @@
 import { Router } from 'express';
 import jwt from 'jsonwebtoken';
 import { HttpError, str } from './auth.js';
-import { Card, contains, GateEvent, insert, row, Session, Settings, TicketRequest, User } from './db.js';
+import { Card, contains, GateEvent, insert, row, Session, Settings, Slot, TicketRequest, User } from './db.js';
 import { guardNames, IN_USE } from './guards.js';
+import { freeByType, priceOf, vehicleTypes } from './lot.js';
 import { calcFee, minutesOf, monthlyValid, nightsCrossed, normPlate, samePlate } from './rules.js';
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 const UID_RE = /^[0-9A-F]{8,20}$/;
 const MAX_ROWS = 1000;
-const MAX_REVENUE_DAYS = 366;
 
 /** "2026-10-30" -> [00:00, 24:00) giờ địa phương. */
 export function dayRange(date) {
@@ -25,10 +25,17 @@ export const today = () => ymd(new Date());
 
 export const getSettings = async () => row(await Settings.findById(1).lean());
 
+/** Sức chứa / đang gửi / còn trống. Đã vẽ sơ đồ thì sức chứa = số ô đang dùng, kèm chỗ trống theo loại xe. */
 export async function parkingStatus() {
-  const [s, occupied] = await Promise.all([getSettings(), Session.countDocuments({ parked: true })]);
-  return { capacity: s.capacity, occupied, free: s.capacity - occupied };
+  const [s, occupied, slots] = await Promise.all([
+    getSettings(), Session.countDocuments({ parked: true }), Slot.countDocuments({ active: true }),
+  ]);
+  const capacity = slots || s.capacity;
+  return { capacity, occupied, free: Math.max(0, capacity - occupied), ...(slots ? { byType: await freeByType() } : {}) };
 }
+
+/** Giá áp cho lượt gửi (theo loại xe của lượt). */
+export const sessionPrice = async (session) => priceOf(await getSettings(), await vehicleTypes(), session.vehicle_type);
 
 /** Doanh thu theo ngày ra (giờ địa phương) của các lượt ra trong [from, to). */
 export async function revenueByDay(from, to) {
@@ -63,17 +70,18 @@ export async function withJoins(sessions, cardCols = ['kind', 'owner'], override
 /** Phí nếu cho lượt gửi này ra vào thời điểm now. */
 export async function feeNow(session, now = new Date()) {
   const card = await Card.findOne({ uid: session.card_uid }).lean();
-  return calcFee(session.time_in, now, await getSettings(), monthlyValid(card, now));
+  return calcFee(session.time_in, now, await sessionPrice(session), monthlyValid(card, now));
 }
 
 /** Thêm phí nếu cho ra bây giờ vào mỗi lượt đang gửi (rows có card_kind, card_valid_until). */
 async function withFee(rows, plate) {
-  const settings = await getSettings();
+  const [settings, types] = await Promise.all([getSettings(), vehicleTypes()]);
   const now = new Date();
   return rows.map((s) => ({
     ...s,
     exact: plate == null || normPlate(s.plate_in) === plate,
-    feeNow: calcFee(s.time_in, now, settings, monthlyValid({ kind: s.card_kind, valid_until: s.card_valid_until }, now)),
+    feeNow: calcFee(s.time_in, now, priceOf(settings, types, s.vehicle_type),
+      monthlyValid({ kind: s.card_kind, valid_until: s.card_valid_until }, now)),
   }));
 }
 
@@ -93,8 +101,10 @@ export function publicRouter() {
   // Thông tin bãi cho khách: tên, địa chỉ, toạ độ (bản đồ, chỉ đường), bảng giá, chỗ trống.
   router.get('/lot', async (_req, res) => {
     const s = await getSettings();
-    res.json({ name: s.lot_name, address: s.address, lat: s.lat, lng: s.lng, priceDay: s.price_day, priceNight: s.price_night,
-      nightMark: s.night_mark.slice(0, 5), ...(await parkingStatus()) });
+    const prices = Object.values(await vehicleTypes()).map((t) => ({ code: t.code, name: t.name, priceDay: t.price_day,
+      priceNight: t.price_night, priceMonth: t.price_month }));
+    res.json({ name: s.lot_name, address: s.address, lat: s.lat, lng: s.lng, prices, nightMark: s.night_mark.slice(0, 5),
+      ...(await parkingStatus()) });
   });
 
   router.post('/fees/quote', async (req, res) => {
@@ -103,7 +113,7 @@ export function publicRouter() {
     if (Number.isNaN(+timeIn) || Number.isNaN(+timeOut) || timeOut < timeIn) {
       throw new HttpError(400, 'timeIn / timeOut phải là thời điểm ISO 8601, giờ ra sau giờ vào');
     }
-    const settings = await getSettings();
+    const settings = priceOf(await getSettings(), await vehicleTypes(), str(req.body?.vehicleType) || 'motorbike');
     const monthly = req.body?.kind === 'monthly';
     res.json({
       fee: calcFee(timeIn, timeOut, settings, monthly),
@@ -176,19 +186,6 @@ export function viewRouter({ jwtSecret }) {
     res.json(events.map((e) => ({ ...row(e), guard_name: names.get(e.guard_id) ?? null })));
   });
 
-  // Doanh thu theo ngày (theo giờ ra), mặc định 7 ngày gần nhất.
-  router.get('/stats/revenue', async (req, res) => {
-    const to = str(req.query.to) || today();
-    const [, end] = dayRange(to);
-    const [start] = dayRange(str(req.query.from) || today());
-    if (!req.query.from) start.setDate(start.getDate() - 6);
-    if (start >= end || (end - start) / 864e5 > MAX_REVENUE_DAYS) {
-      throw new HttpError(400, `Khoảng ngày không hợp lệ (tối đa ${MAX_REVENUE_DAYS} ngày)`);
-    }
-    const days = await revenueByDay(start, end);
-    res.json({ total: days.reduce((a, r) => a + r.revenue, 0), days });
-  });
-
   // Màn thêm thẻ hỏi định kỳ: thẻ vừa quẹt ở cổng bất kỳ sau mốc since (thay cho Realtime).
   router.get('/scans/latest', async (req, res) => {
     const since = new Date(str(req.query.since) || 0);
@@ -204,7 +201,8 @@ export function viewRouter({ jwtSecret }) {
     const cards = await Card.find({ $or: [{ uid: q }, { plate: q }, { owner: q }] }).sort({ created_at: -1 }).lean();
     const users = await User.find({ _id: { $in: cards.map((c) => c.user_id).filter(Boolean) } }, { username: 1 }).lean();
     const names = new Map(users.map((u) => [u._id, u.username]));
-    res.json(cards.map((c) => ({ ...row(c), user_name: names.get(c.user_id) ?? null })));
+    const slots = new Map((await Slot.find({ card_uid: { $in: cards.map((c) => c.uid) } }).lean()).map((sl) => [sl.card_uid, sl.code]));
+    res.json(cards.map((c) => ({ ...row(c), user_name: names.get(c.user_id) ?? null, slot_code: slots.get(c.uid) ?? null })));
   });
 
   router.get('/settings', async (_req, res) => res.json(await getSettings()));
@@ -212,8 +210,10 @@ export function viewRouter({ jwtSecret }) {
 }
 
 /** Dữ liệu thẻ từ body. Nhận cả tên cột (valid_until) lẫn tên API (validUntil). */
-function cardInput(body, uid) {
+function cardInput(body, uid, types) {
   const kind = body?.kind ?? 'guest';
+  const vehicleType = (body?.vehicleType !== undefined ? body.vehicleType : body?.vehicle_type) || (kind === 'monthly' ? 'motorbike' : null);
+  if (vehicleType && !types[vehicleType]) throw new HttpError(400, 'Loại xe không hợp lệ');
   if (!['guest', 'monthly'].includes(kind)) throw new HttpError(400, 'Loại vé là guest hoặc monthly');
   const plate = normPlate(body?.plate) || null;
   if (kind === 'monthly' && !plate) throw new HttpError(400, 'Vé tháng cần biển số');
@@ -221,7 +221,8 @@ function cardInput(body, uid) {
   const until = body?.validUntil !== undefined ? body.validUntil : body?.valid_until;
   if (until != null && !DATE_RE.test(String(until).slice(0, 10))) throw new HttpError(400, 'Hạn vé dạng YYYY-MM-DD');
   return { uid, kind, plate, owner: str(body?.owner) || null, active: body?.active !== false,
-    valid_until: kind === 'monthly' && until ? String(until).slice(0, 10) : null };
+    valid_until: kind === 'monthly' && until ? String(until).slice(0, 10) : null,
+    vehicle_type: kind === 'monthly' ? vehicleType : null, apartment: str(body?.apartment).toUpperCase() || null };
 }
 
 export function manageRouter() {
@@ -245,7 +246,7 @@ export function manageRouter() {
   });
 
   router.post('/cards', async (req, res) => {
-    const card = await Card.create(cardInput(req.body, str(req.body?.uid).toUpperCase()));
+    const card = await Card.create(cardInput(req.body, str(req.body?.uid).toUpperCase(), await vehicleTypes()));
     res.status(201).json(row(card.toObject()));
   });
 
@@ -254,7 +255,9 @@ export function manageRouter() {
     const uid = req.params.uid.toUpperCase();
     const old = await Card.findOne({ uid }).lean();
     if (!old) throw new HttpError(404, 'Không có thẻ này');
-    const changes = { ...cardInput({ ...old, ...req.body }, uid), ...(req.body?.lost === false ? { lost_at: null } : {}) };
+    const changes = { ...cardInput({ ...old, ...req.body }, uid, await vehicleTypes()), ...(req.body?.lost === false ? { lost_at: null } : {}) };
+    // Thẻ thôi là vé tháng hoặc đổi loại xe thì trả ô riêng về cho khách vãng lai.
+    if (changes.kind !== 'monthly' || changes.vehicle_type !== old.vehicle_type) await Slot.updateMany({ card_uid: uid }, { card_uid: null });
     res.json(row(await Card.findOneAndUpdate({ uid }, changes, { returnDocument: 'after' }).lean()));
   });
 
@@ -265,15 +268,15 @@ export function manageRouter() {
     if (await Session.exists({ card_uid: uid })) throw new HttpError(409, IN_USE);
     await Card.deleteOne({ uid });
     await TicketRequest.updateMany({ card_uid: uid }, { card_uid: null });
+    await Slot.updateMany({ card_uid: uid }, { card_uid: null });
     res.status(204).end();
   });
 
   router.put('/settings', async (req, res) => {
-    const [capacity, priceDay, priceNight] = ['capacity', 'priceDay', 'priceNight'].map((k) => req.body?.[k]);
+    // Giá theo loại xe sửa ở /vehicle-types; ở đây là sức chứa (khi chưa vẽ sơ đồ), mốc đêm, thông tin bãi.
+    const capacity = req.body?.capacity;
     const nightMark = str(req.body?.nightMark);
-    if (![capacity, priceDay, priceNight].every(Number.isInteger) || capacity <= 0 || priceDay < 0 || priceNight < 0) {
-      throw new HttpError(400, 'Sức chứa > 0, giá ≥ 0 (số nguyên)');
-    }
+    if (!Number.isInteger(capacity) || capacity <= 0) throw new HttpError(400, 'Sức chứa là số nguyên > 0');
     if (!TIME_RE.test(nightMark)) throw new HttpError(400, 'Mốc đêm dạng HH:MM');
     // Vị trí bãi (không bắt buộc): gửi kèm thì phải đủ cặp toạ độ hợp lệ.
     const b = req.body;
@@ -283,7 +286,7 @@ export function manageRouter() {
       throw new HttpError(400, 'Toạ độ bãi không hợp lệ');
     }
     res.json(row(await Settings.findByIdAndUpdate(1, {
-      capacity, price_day: priceDay, price_night: priceNight, night_mark: `${nightMark}:00`,
+      capacity, night_mark: `${nightMark}:00`,
       lot_name: str(b.lotName) || old.lot_name, address: b.address !== undefined ? str(b.address) || null : old.address, lat, lng,
     }, { returnDocument: 'after' }).lean()));
   });

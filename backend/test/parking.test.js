@@ -45,15 +45,15 @@ test('số chỗ trống công khai, lịch sử theo ngày + doanh thu, phí t�
   assert.equal(rev.body.total, 3000);
 
   const q = await ctx.call('POST', '/fees/quote', { body: { timeIn: '2026-10-28T13:00:00Z', timeOut: '2026-10-29T00:00:00Z' } });
-  assert.deepEqual([q.body.fee, q.body.nights], [5000, 1]); // 20:00 -> 07:00 giờ VN qua mốc 22:00
+  assert.deepEqual([q.body.fee, q.body.nights], [10000, 1]); // xe máy 20:00 -> 07:00 giờ VN qua mốc 22:00: 1 giá đêm
 });
 
 test('cho xe ra khi mất thẻ: đóng lượt, tính phí, tạo lệnh mở cổng', async () => {
   await ctx.call('POST', '/cards', { token, body: { uid: '22222222' } });
   const s = await ctx.db.insert(ctx.db.Session, { card_uid: '22222222', plate_in: '51F00001', time_in: ago(2) });
-  assert.equal((await ctx.call('GET', `/sessions/${s.id}/fee`, { token })).body.fee, 3000);
+  assert.equal((await ctx.call('GET', `/sessions/${s.id}/fee`, { token })).body.fee, 5000); // giá ngày xe máy
   const r = await ctx.call('POST', `/sessions/${s.id}/release`, { token });
-  assert.deepEqual([r.status, r.body.fee], [200, 3000]);
+  assert.deepEqual([r.status, r.body.fee], [200, 5000]);
   assert.equal((await ctx.call('POST', `/sessions/${s.id}/release`, { token })).status, 409);
   const [ev] = (await ctx.call('GET', '/events?limit=1', { token })).body;
   assert.deepEqual([ev.kind, ev.status, ev.gate], ['open_cmd', 'pending', 'out']);

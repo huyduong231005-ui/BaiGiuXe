@@ -53,9 +53,7 @@ export const Otp = model('Otp', new Schema({
 
 export const Settings = model('Settings', new Schema({
   _id: Number, // luôn = 1
-  capacity: { type: Number, default: 50 },
-  price_day: { type: Number, default: 3000 },
-  price_night: { type: Number, default: 5000 },
+  capacity: { type: Number, default: 50 }, // dùng khi chưa vẽ sơ đồ ô đậu; có ô thì sức chứa = số ô
   night_mark: { type: String, default: '22:00:00' },
   lot_name: { type: String, default: 'Bãi giữ xe' },
   address: S,
@@ -63,9 +61,57 @@ export const Settings = model('Settings', new Schema({
   lng: N,
 }, opts), 'settings');
 
+// Loại xe và bảng giá (vé lượt ngày / mỗi đêm, vé tháng). code: motorbike | car | bicycle | ...
+export const VehicleType = model('VehicleType', new Schema({
+  _id: Number,
+  code: { type: String, required: true, unique: true },
+  name: { type: String, required: true },
+  price_day: { type: Number, default: 0 },
+  price_night: { type: Number, default: 0 },
+  price_month: { type: Number, default: 0 },
+}, opts), 'vehicle_types');
+
+// Khu đậu xe trên sơ đồ: lưới rows x cols ô, cùng một loại xe. order = thứ tự gần cổng (nhỏ = gần).
+export const Zone = model('Zone', new Schema({
+  _id: Number,
+  name: { type: String, required: true, unique: true },
+  vehicle_type: { type: String, required: true },
+  rows: { type: Number, default: 1 },
+  cols: { type: Number, default: 1 },
+  order: { type: Number, default: 0 },
+}, opts), 'zones');
+
+// Ô đậu. card_uid = ô riêng của cư dân (thẻ tháng); null = ô cho khách vãng lai.
+export const Slot = model('Slot', new Schema({
+  _id: Number,
+  code: { type: String, required: true, unique: true }, // VD: A-01
+  zone_id: { type: Number, required: true },
+  row: Number,
+  col: Number,
+  vehicle_type: String,
+  card_uid: S,
+  active: { type: Boolean, default: true }, // false = ô tạm khoá (sửa chữa...)
+}, opts).index({ card_uid: 1 }, { unique: true, partialFilterExpression: { card_uid: { $type: 'string' } } }), 'slots');
+
+// Khoản thu ngoài phí lượt: vé tháng (duyệt đơn đăng ký / gia hạn).
+export const Payment = model('Payment', new Schema({
+  _id: Number,
+  kind: { type: String, default: 'monthly' },
+  amount: { type: Number, required: true },
+  card_uid: S,
+  user_id: N,
+  request_id: N,
+  months: N,
+  vehicle_type: S,
+  note: S,
+  created_at: now,
+}, opts).index({ created_at: -1 }), 'payments');
+
 export const Card = model('Card', new Schema({
   uid: { type: String, required: true, unique: true },
   kind: { type: String, default: 'guest' },
+  vehicle_type: S, // vé tháng: loại xe (giá tháng, ô đậu); vé lượt: null, loại xe lấy theo lượt gửi
+  apartment: S, // căn hộ của chủ thẻ (VD: A1-12.05)
   plate: S,
   owner: S,
   active: { type: Boolean, default: true },
@@ -94,6 +140,9 @@ export const Session = model('Session', new Schema({
   time_out: D,
   fee: N,
   override_by: N, // bảo vệ mở tay
+  vehicle_type: { type: String, default: 'motorbike' },
+  slot_code: S, // ô đậu được chỉ lúc vào
+  offline: { type: Boolean, default: false }, // ghi bù từ ESP32 sau khi mất mạng
   parked: { type: Boolean, default: true },
 }, opts).index({ card_uid: 1 }, { unique: true, partialFilterExpression: { parked: true } })
   .index({ plate_in: 1 }, { unique: true, partialFilterExpression: { parked: true } })
@@ -111,8 +160,17 @@ export const GateEvent = model('GateEvent', new Schema({
   img: S,
   message: S,
   open: { type: Boolean, default: false },
+  // Số liệu nhận diện biển của lượt quẹt (để thống kê tốc độ / độ chính xác)
+  ocr_ms: N, // thời gian chụp + OCR (gồm cả lần chụp lại)
+  total_ms: N, // từ lúc quẹt tới lúc có kết quả
+  shots: N, // số lần chụp (1 hoặc 2)
+  score: N,
+  vehicle_type: S,
+  slot_code: S,
+  offline_key: S, // lượt ghi bù từ ESP32: chống ghi trùng khi gửi lại
   created_at: now,
-}, opts).index({ kind: 1, status: 1 }), 'gate_events');
+}, opts).index({ kind: 1, status: 1 })
+  .index({ offline_key: 1 }, { unique: true, partialFilterExpression: { offline_key: { $type: 'string' } } }), 'gate_events');
 
 export const ShiftDef = model('ShiftDef', new Schema({
   _id: Number,
@@ -141,6 +199,8 @@ export const TicketRequest = model('TicketRequest', new Schema({
   _id: Number,
   user_id: { type: Number, required: true },
   card_uid: S, // có = gia hạn thẻ đang dùng; null = đăng ký mới
+  vehicle_type: { type: String, default: 'motorbike' },
+  apartment: S,
   plate: String,
   owner_name: String,
   months: Number,
@@ -160,12 +220,25 @@ export const PlateImage = model('PlateImage', new Schema({
   created_at: { type: Date, default: Date.now, expires: 90 * 24 * 3600 },
 }, opts), 'plate_images');
 
+// Giá mặc định tham khảo chung cư TP.HCM (QĐ 35/2018 trần xe máy 310.000đ/tháng; dự án thực tế 100–150k xe máy,
+// ô tô 1,2–1,5 triệu). Quản lý sửa được trong app.
+const DEFAULT_TYPES = [
+  ['motorbike', 'Xe máy', 5000, 10000, 150000],
+  ['car', 'Ô tô', 25000, 50000, 1500000],
+  ['bicycle', 'Xe đạp', 2000, 5000, 100000],
+];
+
 const DEFAULT_SHIFTS = [['Ca sáng', '06:00:00', '14:00:00'], ['Ca chiều', '14:00:00', '22:00:00'], ['Ca đêm', '22:00:00', '06:00:00']];
 
 /** Tạo index, dòng cài đặt và 3 ca mặc định nếu CSDL còn trống (thay cho migration). */
 export async function initDb() {
   await Promise.all(Object.values(mongoose.models).map((m) => m.syncIndexes()));
   await Settings.updateOne({ _id: 1 }, { $setOnInsert: { capacity: 50 } }, { upsert: true, setDefaultsOnInsert: true });
+  if (!(await VehicleType.exists({}))) {
+    for (const [code, name, day, night, month] of DEFAULT_TYPES) {
+      await insert(VehicleType, { code, name, price_day: day, price_night: night, price_month: month });
+    }
+  }
   if (!(await ShiftDef.exists({}))) {
     for (const [name, start, end] of DEFAULT_SHIFTS) await insert(ShiftDef, { name, start_time: start, end_time: end });
   }

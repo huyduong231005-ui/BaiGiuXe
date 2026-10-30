@@ -5,6 +5,8 @@ import { authRouter, HttpError, publicUser, requireAuth, updateProfile } from '.
 import { adminRouter } from './admin.js';
 import { customerRouter, requestsRouter } from './customer.js';
 import { gateRouter } from './gate.js';
+import { lotMap, lotRouter } from './lot.js';
+import { statsRouter } from './stats.js';
 import { guardsRouter, meAttendance } from './guards.js';
 import { openapi } from './openapi.js';
 import { manageRouter, publicRouter, viewRouter } from './parking.js';
@@ -38,12 +40,14 @@ export function createApp(deps) {
   app.get('/me', auth(), (req, res) => res.json(publicUser(req.user)));
   app.patch('/me', auth(), updateProfile());
   app.get('/me/attendance', auth(), meAttendance());
+  // Sơ đồ bãi không kèm biển số / chủ xe: cư dân xem ô của mình, khách xem chỗ trống.
+  app.get('/lot/map/public', auth(), async (_req, res) => res.json(await lotMap({ withPlates: false })));
 
   app.use('/admin', auth('admin'), adminRouter(deps));
   app.use('/me', auth('customer')); // các API /me/... còn lại là của khách hàng (chủ vé tháng)
   app.use(customerRouter(deps));
   app.use(staff, viewRouter(deps), manageRouter(deps), guardsRouter(deps), platesRouter(deps), reportsRouter(deps),
-    requestsRouter(deps), gateRouter(deps));
+    requestsRouter(deps), gateRouter(deps), lotRouter(deps), statsRouter(deps));
 
   app.use((_req, _res, next) => next(new HttpError(404, 'Không tìm thấy API')));
   // eslint-disable-next-line no-unused-vars
