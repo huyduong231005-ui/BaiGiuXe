@@ -234,7 +234,8 @@ class LotPainter extends CustomPainter {
     for (final (ch, label) in [('I', 'VÀO'), ('O', 'RA')]) {
       for (var r = 0; r < layout.length; r++) {
         for (var c = 0; c < layout[0].length; c++) {
-          if (layout[r][c] == ch) _text(canvas, label, rect(r, c).center, cell * 0.38, Colors.white, bold: true);
+          // Nâng chữ lên nửa trên ô cổng để không đè chữ tên khu bên cạnh
+          if (layout[r][c] == ch) _text(canvas, label, rect(r, c).center - Offset(0, cell * 0.22), cell * 0.34, Colors.white, bold: true);
         }
       }
     }
