@@ -7,8 +7,12 @@
 //   ĐT -> bgx/cmd:     {"t":"res","id":5,"ok":true,"open":true,"l1":"..","l2":".."} · {"t":"open"}
 //                      · {"t":"st","free":37,"cap":50} · {"t":"time","ts":<giây local>} · {"t":"auth","ok":true,"gid":2}
 //                      · {"t":"attres","ok":true,"l1":"VAO CA","l2":"Tuan 06:05 tre 5p"}
+//                      · {"t":"wl","i":0,"n":25,"c":"UID:YYYYMMDD;UID:0"} danh sách thẻ tháng (chia nhiều bản tin)
+//                      · {"t":"offack","n":4} API đã nhận 4 lượt offline đầu hàng chờ
+//   ESP32 -> bgx/evt:  {"t":"off","g":"out","ev":[{"t":"in","uid":"..","ts":..,"by":"card"},..]} gửi bù lượt offline
 //   Online/offline (retained + LWT, "1"/"0"): bgx/esp (ESP32), bgx/phone/in|out|both (từng ĐT).
-// Điện thoại lo phần Supabase. Nút khẩn cấp và vân tay mở cổng cục bộ, không cần mạng.
+// Điện thoại gọi REST API. Mất ĐT / mất mạng: thẻ tháng có trong danh sách đã lưu (flash) vẫn qua được, mọi lượt
+// ghi vào flash kèm giờ DS3231 rồi gửi bù khi có ĐT lại. Nút khẩn cấp và vân tay mở cổng cục bộ, không cần mạng.
 #include <Arduino.h>
 #include <ArduinoJson.h>
 #include <WiFi.h>
@@ -27,6 +31,8 @@
 #include <RTClib.h>
 #include <Adafruit_Fingerprint.h>
 #include <ESP32Servo.h>
+#include <LittleFS.h>
+#include <vector>
 #include "pins.h"
 #include "secrets.h"
 #include "ca_roots.h"
@@ -49,7 +55,10 @@ const uint32_t MSG_SHOW_MS = 5000;
 const uint32_t AUTH_WINDOW_MS = 20000;
 const int PIN_MAX_TRIES = 5;
 const uint32_t PIN_LOCK_MS = 60000;
-const size_t CMD_MAX = 256;
+const size_t CMD_MAX = 512;  // bản tin danh sách thẻ tháng ~350 byte
+const size_t OFF_MAX = 1000;   // tối đa số lượt offline lưu trong flash (~60KB)
+const int OFF_BATCH = 4;       // số lượt gửi bù mỗi bản tin
+const uint32_t OFF_RETRY_MS = 15000;
 
 // ---- Thiết bị ----
 SPIClass hspi(HSPI);
@@ -71,6 +80,7 @@ struct Gate {
   MFRC522 &rfid;
   long pendingId = 0;
   uint32_t pendingAt = 0, lastUidAt = 0;
+  String pendingUid;  // thẻ đang chờ ĐT trả kết quả (ĐT không trả lời thì xét offline)
   unsigned long resets = 0;  // số lần RC522 bị reset (sụt áp) phải khởi tạo lại
   String lastUid;
 };
@@ -92,6 +102,17 @@ int pinFails = 0;
 char lastKey = 'N';
 bool phoneIn = false, phoneOut = false, phoneBoth = false;  // theo bgx/phone/<cổng>
 uint32_t lastMqttTry = 0;
+
+// ---- Dự phòng mất mạng ----
+struct WlCard {
+  String uid;
+  uint32_t until;  // YYYYMMDD, 0 = không hạn
+};
+std::vector<WlCard> wl, wlNew;  // danh sách thẻ tháng đang dùng / đang nhận dở từ ĐT
+size_t offCount = 0;            // số lượt offline đang chờ gửi (số dòng /off.log)
+uint32_t offSentAt = 0;         // đã gửi 1 lô, chờ offack
+const char *WL_FILE = "/wl.txt";
+const char *OFF_FILE = "/off.log";
 
 // ---------- MQTT ----------
 
@@ -157,6 +178,113 @@ void mqttLoop() {
   Serial.println("[mqtt] da ket noi");
 }
 
+// ---------- Dự phòng mất mạng: danh sách thẻ tháng + nhật ký offline trong flash ----------
+
+void loadWhitelist() {
+  wl.clear();
+  File f = LittleFS.open(WL_FILE, "r");
+  while (f && f.available()) {
+    String line = f.readStringUntil('\n');
+    int c = line.indexOf(':');
+    if (c > 0) wl.push_back({line.substring(0, c), (uint32_t)line.substring(c + 1).toInt()});
+  }
+  if (f) f.close();
+  File o = LittleFS.open(OFF_FILE, "r");
+  offCount = 0;
+  while (o && o.available()) offCount += o.readStringUntil('\n').length() > 0;
+  if (o) o.close();
+  Serial.printf("[offline] %u the thang, %u luot cho gui bu\n", (unsigned)wl.size(), (unsigned)offCount);
+}
+
+/// Nhận 1 phần danh sách thẻ tháng; đủ n thẻ thì thay danh sách cũ và lưu flash.
+void onWhitelist(JsonDocument &d) {
+  size_t i = d["i"] | 0, n = d["n"] | 0;
+  if (i == 0) wlNew.clear();
+  if (i != wlNew.size()) return;  // lệch thứ tự (mất 1 bản tin): chờ ĐT gửi lại lần sau
+  String c = d["c"] | "";
+  for (int start = 0; start < (int)c.length();) {
+    int end = c.indexOf(';', start);
+    if (end < 0) end = c.length();
+    String item = c.substring(start, end);
+    int colon = item.indexOf(':');
+    if (colon > 0) wlNew.push_back({item.substring(0, colon), (uint32_t)item.substring(colon + 1).toInt()});
+    start = end + 1;
+  }
+  if (wlNew.size() < n) return;
+  wl = wlNew;
+  File f = LittleFS.open(WL_FILE, "w");
+  for (auto &x : wl) f.printf("%s:%u\n", x.uid.c_str(), (unsigned)x.until);
+  f.close();
+  Serial.printf("[offline] da luu %u the thang\n", (unsigned)wl.size());
+}
+
+bool wlAllows(const String &uid) {
+  DateTime t = rtc.now();
+  uint32_t today = t.year() * 10000UL + t.month() * 100UL + t.day();
+  for (auto &x : wl)
+    if (x.uid == uid) return x.until == 0 || x.until >= today;
+  return false;
+}
+
+/// Ghi 1 lượt lúc mất ĐT / mất mạng. ts = giờ DS3231 (giờ địa phương), API đổi về giờ thật.
+void logOffline(const char *t, const String &uid, const char *by, int guard = 0) {
+  if (offCount >= OFF_MAX) {  // ponytail: giữ lượt cũ, bỏ lượt mới khi đầy; cần ĐT gửi bù để có chỗ
+    Serial.println("[offline] nhat ky day, bo luot moi");
+    return;
+  }
+  JsonDocument e;
+  e["t"] = t;
+  if (uid.length()) e["uid"] = uid;
+  e["ts"] = rtc.now().unixtime();
+  e["by"] = by;
+  if (guard) e["guard"] = guard;
+  File f = LittleFS.open(OFF_FILE, FILE_APPEND);
+  serializeJson(e, f);
+  f.print('\n');
+  f.close();
+  offCount++;
+}
+
+/// Có ĐT cổng ra thì gửi bù từng lô OFF_BATCH lượt; chờ offack rồi mới gửi lô sau (mất ack thì gửi lại, API tự bỏ trùng).
+void flushOffline() {
+  if (!offCount || !phoneConnected("out") || (offSentAt && millis() - offSentAt < OFF_RETRY_MS)) return;
+  JsonDocument d;
+  d["t"] = "off";
+  d["g"] = "out";
+  JsonArray ev = d["ev"].to<JsonArray>();
+  File f = LittleFS.open(OFF_FILE, "r");
+  for (int i = 0; i < OFF_BATCH && f && f.available();) {
+    String line = f.readStringUntil('\n');
+    if (!line.length()) continue;
+    JsonDocument e;
+    if (!deserializeJson(e, line)) ev.add(e);
+    i++;
+  }
+  if (f) f.close();
+  if (ev.size()) notify(d);
+  offSentAt = millis();
+}
+
+/// API đã nhận n lượt đầu hàng chờ: xoá khỏi flash.
+void onOfflineAck(size_t n) {
+  File f = LittleFS.open(OFF_FILE, "r");
+  String rest;
+  size_t skipped = 0;
+  while (f && f.available()) {
+    String line = f.readStringUntil('\n');
+    if (!line.length()) continue;
+    if (skipped < n) skipped++;
+    else rest += line + '\n';
+  }
+  if (f) f.close();
+  File w = LittleFS.open(OFF_FILE, "w");
+  w.print(rest);
+  w.close();
+  offCount = offCount > skipped ? offCount - skipped : 0;
+  offSentAt = 0;
+  Serial.printf("[offline] da gui bu %u luot, con %u\n", (unsigned)skipped, (unsigned)offCount);
+}
+
 // ---------- Hiển thị / còi ----------
 
 void showMsg(const String &a, const String &b = "") {
@@ -218,7 +346,8 @@ void draw() {
   if (emergency) oled.print("!! KHAN CAP - MO !!");
   else if (WiFi.status() != WL_CONNECTED) oled.print("Mat WiFi");
   else if (!mqtt.connected()) oled.print("Mat may chu MQTT");
-  else if (!phoneConnected()) oled.print("Cho DT ket noi");
+  else if (!phoneConnected()) oled.print(wl.size() ? "Mat DT: the thang OK" : "Cho DT ket noi");
+  else if (offCount) oled.printf("Gui bu: %u luot", (unsigned)offCount);
   else if (freeSlots >= 0) oled.printf("Con trong: %d/%d", freeSlots, capacity);
   bool showing = millis() < msgUntil || authMode;
   // Vùng xanh (hàng 16-63): dòng chính chữ đậm to, dòng phụ bên dưới.
@@ -241,6 +370,13 @@ void finishScan(Gate &g, bool ok, const String &l1, const String &l2, bool open)
   beep(ok ? 1 : 3);
 }
 
+/// Không có ĐT / ĐT không trả lời: cư dân (thẻ tháng trong danh sách đã lưu) vẫn qua, ghi nhật ký để gửi bù.
+void offlineScan(Gate &g, const String &uid) {
+  if (!wlAllows(uid)) return finishScan(g, false, "TU CHOI", "Mat mang - goi BV", false);
+  logOffline(g.name, uid, "card");
+  finishScan(g, true, "CU DAN", "Offline - moi qua", true);
+}
+
 void readCard(Gate &g) {
   if (g.pendingId || !g.rfid.PICC_IsNewCardPresent() || !g.rfid.PICC_ReadCardSerial()) return;
   String uid;
@@ -255,13 +391,12 @@ void readCard(Gate &g) {
   g.lastUid = uid;
   g.lastUidAt = millis();
   if (!phoneConnected(g.name)) {
-    // Ghi rõ thiếu ĐT cho cổng nào: hay gặp khi chỉ có 1 ĐT mà chọn vai trò "cổng vào" thay vì "cả 2 cổng".
-    const char *gateVi = strcmp(g.name, "in") ? "ra" : "vao";
-    Serial.printf("[rfid] khong co DT phu trach cong %s -> tu choi\n", gateVi);
-    return finishScan(g, false, "TU CHOI", String("Chua co DT cong ") + gateVi, false);
+    Serial.printf("[rfid] khong co DT phu trach cong %s -> che do offline\n", g.name);
+    return offlineScan(g, uid);
   }
 
   g.pendingId = nextId++;
+  g.pendingUid = uid;
   g.pendingAt = millis();
   showMsg("Dang xu ly", uid);
   JsonDocument ev;
@@ -300,7 +435,7 @@ void checkRfidHealth() {
 
 void checkTimeouts() {
   for (Gate *g : {&gIn, &gOut})
-    if (g->pendingId && millis() - g->pendingAt > RESULT_TIMEOUT_MS) finishScan(*g, false, "TU CHOI", "DT k phan hoi", false);
+    if (g->pendingId && millis() - g->pendingAt > RESULT_TIMEOUT_MS) offlineScan(*g, g->pendingUid);
   if (pinSentAt && millis() - pinSentAt > PIN_REPLY_TIMEOUT_MS) {
     pinSentAt = 0;
     showMsg("DT k phan hoi", "Dung van tay");
@@ -347,7 +482,7 @@ void checkFinger() {
   }
   // Vân tay đã khớp mẫu trong AS608 -> mở ngay; ĐT chỉ ghi log + đóng lượt bị từ chối gần nhất.
   grantLocal("Van tay #" + String(finger.fingerID));
-  if (!phoneConnected("out")) return;  // ponytail: không có ĐT thì log bị mất, quản lý đóng lượt tay trong app
+  if (!phoneConnected("out")) return logOffline("out", "", "finger", finger.fingerID);
   JsonDocument ev;
   ev["t"] = "auth";
   ev["g"] = "out";
@@ -484,7 +619,10 @@ void checkEmergency() {
   barrier.write(emergency ? SERVO_OPEN_DEG : SERVO_CLOSE_DEG);
   barrierCloseAt = 0;
   beep(emergency ? 5 : 1, 60);
-  if (!phoneConnected("out")) return;
+  if (!phoneConnected("out")) {
+    if (emergency) logOffline("out", "", "emg");
+    return;
+  }
   JsonDocument ev;
   ev["t"] = "emg";
   ev["g"] = "out";
@@ -516,6 +654,10 @@ void handleCmd(const char *s) {
     rtc.adjust(DateTime((uint32_t)(d["ts"] | 0UL)));
   } else if (!strcmp(t, "auth")) {
     if (pinSentAt) onPinResult(d["ok"] | false, d["gid"] | 0);  // bỏ qua nếu không có PIN nào đang chờ
+  } else if (!strcmp(t, "wl")) {
+    onWhitelist(d);
+  } else if (!strcmp(t, "offack")) {
+    onOfflineAck(d["n"] | 0);
   } else if (!strcmp(t, "attres")) {  // kết quả chấm công
     bool ok = d["ok"] | false;
     pinSentAt = 0;
@@ -567,6 +709,9 @@ void setup() {
   barrier.attach(SERVO_PIN, 500, 2400);
   barrier.write(SERVO_CLOSE_DEG);
 
+  if (!LittleFS.begin(true)) Serial.println("LittleFS loi");  // true: định dạng lại nếu chưa có
+  loadWhitelist();
+
   initMqtt();
   Serial.println("[boot] dang ket noi WiFi: " WIFI_SSID);
   showMsg("San sang");
@@ -587,6 +732,7 @@ void loop() {
   readCard(gOut);
   checkRfidHealth();
   checkTimeouts();
+  flushOffline();
 
   uint32_t now = millis();
   if (authMode && now > authUntil) authMode = false;
