@@ -6,8 +6,8 @@ services:
     plan: free
     region: singapore
     rootDir: backend
-    dockerfilePath: ./backend/Dockerfile # tính từ gốc repo
-    dockerContext: ./backend
+    dockerfilePath: ./Dockerfile # tính từ rootDir (backend/), không phải gốc repo
+    dockerContext: .
     healthCheckPath: /health
     envVars:
       - key: TZ

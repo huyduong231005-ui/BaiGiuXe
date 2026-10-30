@@ -32,7 +32,7 @@ Middleware _rateLimit() {
   };
 }
 
-/// Trang chủ (danh sách API, số chỗ trống trực tiếp), /docs (Swagger UI), /openapi.json: file tĩnh trong public/.
+/// Trang chủ và /docs (Swagger UI), /index.html (danh sách API, số chỗ trống trực tiếp), /openapi.json: file tĩnh trong public/.
 Router _staticRoutes() {
   final router = Router();
   Future<Response> file(String name, String type) async {
@@ -42,7 +42,7 @@ Router _staticRoutes() {
   }
 
   const html = 'text/html; charset=utf-8';
-  for (final (path, name) in [('/', 'index.html'), ('/index.html', 'index.html'), ('/index', 'index.html'),
+  for (final (path, name) in [('/', 'docs.html'), ('/index.html', 'index.html'), ('/index', 'index.html'),
     ('/docs', 'docs.html'), ('/docs.html', 'docs.html')]) {
     router.get(path, (_) => file(name, html));
   }
