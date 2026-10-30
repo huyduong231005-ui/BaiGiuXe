@@ -173,7 +173,17 @@ class GateStation {
     }
   }
 
-  Future<void> _sendStatus(Rec st) => link.send({'t': 'st', 'free': st['free'], 'cap': st['capacity']});
+  Future<void> _sendStatus(Rec st) => _esp({'t': 'st', 'free': st['free'], 'cap': st['capacity']});
+
+  /// Gửi cho ESP32 nếu đang kết nối (quẹt thử không có ESP32 thì bỏ qua).
+  Future<void> _esp(Rec msg) async {
+    if (link.connected) await link.send(msg);
+  }
+
+  /// Quẹt thử: chạy đúng quy trình một lượt quẹt thẻ (chụp, đọc biển, API quyết định, chỉ ô) mà không cần ESP32 /
+  /// đầu đọc RFID. Dùng để kiểm tra camera + nhận diện biển, hoặc demo khi phần cứng lỗi.
+  void simulateScan(String uid, String g) =>
+      _queue = _queue.then((_) => _scanGuarded({'t': 'scan', 'g': g, 'uid': uid, 'id': 0}));
 
   Future<void> _handle(Rec ev) async {
     try {
@@ -203,7 +213,7 @@ class GateStation {
     } catch (e) {
       last.value = 'Loi: $e';
       _addHistory(ev['g'] as String, null, false, 'Loi he thong');
-      await link.send({'t': 'res', 'id': ev['id'], 'ok': false, 'open': false, 'l1': 'TU CHOI', 'l2': 'Loi he thong'});
+      await _esp({'t': 'res', 'id': ev['id'], 'ok': false, 'open': false, 'l1': 'TU CHOI', 'l2': 'Loi he thong'});
     } finally {
       busy.value = false;
     }
@@ -258,7 +268,7 @@ class GateStation {
     }
     final ok = r['ok'] == true;
     final message = r['l2'] as String;
-    await link.send({'t': 'res', 'id': ev['id'], 'ok': ok, 'open': r['open'] == true, 'l1': r['l1'], 'l2': message});
+    await _esp({'t': 'res', 'id': ev['id'], 'ok': ok, 'open': r['open'] == true, 'l1': r['l1'], 'l2': message});
     final tReply = sw.elapsedMilliseconds;
     if (!ok && g == 'out') _lastDenied = (uid: uid, plate: plate, path: path, at: now);
     _addHistory(g, plate, ok, message);

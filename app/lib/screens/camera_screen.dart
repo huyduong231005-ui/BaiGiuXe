@@ -7,6 +7,7 @@ import 'package:wakelock_plus/wakelock_plus.dart';
 import '../api.dart';
 import '../esp_link.dart';
 import '../gate_station.dart';
+import '../logic.dart';
 import '../lot.dart';
 import '../main.dart' show ManagerHome, prefs;
 
@@ -119,6 +120,56 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     ],
   );
 
+  /// Chọn thẻ (và cổng nếu máy lo cả 2 cổng) rồi chạy một lượt quẹt thẻ giả: camera chụp + đọc biển thật.
+  Future<void> _simulate() async {
+    final List<Rec> cards;
+    try {
+      cards = ((await api.get('/cards')) as List).cast<Rec>();
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+      return;
+    }
+    if (!mounted) return;
+    var gate = widget.gate == 'both' ? 'in' : widget.gate;
+    final uid = await showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      builder: (c) => StatefulBuilder(
+        builder: (c, setS) => SafeArea(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(maxHeight: MediaQuery.of(c).size.height * 0.7),
+            child: ListView(shrinkWrap: true, children: [
+              const ListTile(
+                title: Text('Quẹt thử', style: TextStyle(fontWeight: FontWeight.w600)),
+                subtitle: Text('Hướng camera vào biển số rồi chọn thẻ: app chụp, đọc biển, gọi API như lượt quẹt thật.'),
+              ),
+              if (widget.gate == 'both')
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: SegmentedButton<String>(
+                    segments: const [
+                      ButtonSegment(value: 'in', label: Text('Cổng vào'), icon: Icon(Icons.login)),
+                      ButtonSegment(value: 'out', label: Text('Cổng ra'), icon: Icon(Icons.logout)),
+                    ],
+                    selected: {gate},
+                    onSelectionChanged: (v) => setS(() => gate = v.first),
+                  ),
+                ),
+              for (final card in cards)
+                ListTile(
+                  leading: Icon(card['kind'] == 'monthly' ? Icons.event_repeat : Icons.credit_card),
+                  title: Text('${card['uid']}${card['plate'] == null ? '' : ' · ${card['plate']}'}'),
+                  subtitle: Text(card['kind'] == 'monthly' ? 'Vé tháng${card['slot_code'] == null ? '' : ' · ô ${card['slot_code']}'}' : 'Vé lượt (khách vãng lai)'),
+                  onTap: () => Navigator.pop(c, card['uid'] as String),
+                ),
+            ]),
+          ),
+        ),
+      ),
+    );
+    if (uid != null) station?.simulateScan(uid, gate);
+  }
+
   Widget _cameraView() {
     final title = switch (widget.gate) {
       'in' => 'Camera cổng vào',
@@ -129,6 +180,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       appBar: AppBar(
         title: Text(title),
         actions: [
+          IconButton(onPressed: _simulate, icon: const Icon(Icons.touch_app_outlined), tooltip: 'Quẹt thử (không cần ESP32)'),
           TextButton.icon(
             onPressed: () => setState(() => showCamera = false),
             icon: const Icon(Icons.dashboard),
