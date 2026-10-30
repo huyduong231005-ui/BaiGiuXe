@@ -137,6 +137,18 @@ void main() {
     expect(layoutError(sampleLayout, ['A', 'B', 'C', 'D']), isNull);
   });
 
+  test('đường 1 chiều: chỉ đường theo mũi tên, ô đỗ xong không ra được thì báo lỗi', () {
+    // Làn trên chạy sang trái: 2 chiều thì tới ô (2,4) nhanh nhất qua làn trên, 1 chiều phải vòng xuống làn dưới.
+    const layout = ['#I###O#', '#V<<<^#', '#VAAA^#', '#>>>>^#', '#######'];
+    final r = route(layout, 2, 4, 'A-03')!;
+    expect(r['path'], [[0, 1], [1, 1], [2, 1], [3, 1], [3, 2], [3, 3], [3, 4], [2, 4]]);
+    expect(r['exitPath'], [[2, 4], [3, 4], [3, 5], [2, 5], [1, 5], [0, 5]]);
+    expect(r['hint'], 'Qua cổng vào, đi thẳng 3 ô, rẽ trái đi 3 ô, ô A-03 ở bên trái');
+    expect(layoutError(layout, ['A']), isNull);
+    // Ô (3,2) chỉ ra được làn V cụt: đỗ xong không quay lên được
+    expect(layoutError(['#I##O#', '#>>>^#', '#V####', '#VA###', '######'], ['A']), contains('không có đường ra'));
+  });
+
   test('JWT: ký / kiểm, sai chữ ký, hết hạn, sai audience', () {
     final t = jwtSign({'sub': 5, 'role': 'admin'}, 's', expiresIn: const Duration(minutes: 1));
     expect(jwtVerify(t, 's')['sub'], 5);

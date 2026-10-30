@@ -1,13 +1,16 @@
 // Mặt bằng bãi dạng lưới ký tự (mỗi chuỗi là một hàng, mỗi ký tự là một ô vuông trên mặt đất):
-//   '#' tường   '.' bỏ trống (cột, bồn cây...)   '=' đường đi   'I' lối vào   'O' lối ra
-//   'A'..'Z' (trừ I, O) ô đậu của khu cùng tên.
-// Xe chỉ chạy trên đường đi / lối vào / lối ra; ô đậu phải nằm cạnh đường. Đường đi tìm bằng BFS (ngắn nhất theo số ô).
+//   '#' tường   '.' bỏ trống (cột, bồn cây...)   '=' đường 2 chiều   'I' lối vào   'O' lối ra
+//   '>' '<' '^' 'V' đường 1 chiều (xe chạy theo mũi tên: phải, trái, lên, xuống)
+//   'A'..'Z' (trừ I, O, V) ô đậu của khu cùng tên.
+// Xe chỉ chạy trên đường đi / lối vào / lối ra; ô đậu phải nằm cạnh đường. Đường đi tìm bằng BFS (ngắn nhất theo số ô),
+// không đi ngược mũi tên của ô đang đứng hay ô sắp vào (rẽ ngang được).
 
 typedef Cell = (int, int);
 
-const walkable = {'=', 'I', 'O'};
-final zoneLetterRe = RegExp(r'^[A-HJ-NP-Z]$');
-final _allowedRe = RegExp(r'^[#.=IOA-Z]+$');
+const _arrows = <String, Cell>{'^': (-1, 0), '>': (0, 1), 'V': (1, 0), '<': (0, -1)};
+final walkable = {'=', 'I', 'O', ..._arrows.keys};
+final zoneLetterRe = RegExp(r'^[A-HJ-NP-UW-Z]$');
+final _allowedRe = RegExp(r'^[#.=IOA-Z<>^]+$');
 const _maxSize = 40;
 const List<Cell> _dirs = [(-1, 0), (0, 1), (1, 0), (0, -1)];
 
@@ -37,16 +40,26 @@ String? layoutError(List<String>? layout, List<String> zoneNames) {
   if (exits.isEmpty) return 'Cần ít nhất 1 lối ra';
   final (:dist, prev: _) = bfs(layout, entrances);
   if (!exits.any(dist.containsKey)) return 'Không có đường từ lối vào tới lối ra';
-  final stuck = cellsOf(layout, isZoneLetter).where((cell) => _slotAccess(dist, cell) == null).toList();
-  if (stuck.isNotEmpty) {
-    final (r, c) = stuck[0];
-    return '${stuck.length} ô đậu không có đường xe tới (VD ô ở hàng ${r + 1}, cột ${c + 1})';
-  }
+  String where(List<Cell> cells) => 'VD ô ở hàng ${cells[0].$1 + 1}, cột ${cells[0].$2 + 1}';
+  final slots = cellsOf(layout, isZoneLetter);
+  final stuck = slots.where((cell) => _slotAccess(dist, cell) == null).toList();
+  if (stuck.isNotEmpty) return '${stuck.length} ô đậu không có đường xe tới (${where(stuck)})';
+  // Đường 1 chiều: đỗ xong phải đi tiếp được tới lối ra (không kẹt trong làn cụt).
+  final toExit = bfs(layout, exits, reverse: true).dist;
+  final trapped = slots.where((cell) => !toExit.containsKey(_slotAccess(dist, cell))).toList();
+  if (trapped.isNotEmpty) return '${trapped.length} ô đậu đỗ xong không có đường ra, xem lại chiều mũi tên (${where(trapped)})';
   return null;
 }
 
+/// Đi từ ô a sang ô kề b theo hướng d có ngược mũi tên của a hoặc b không.
+bool _against(List<String> layout, Cell a, Cell b, Cell d) {
+  final back = (-d.$1, -d.$2);
+  return _arrows[_at(layout, a.$1, a.$2)] == back || _arrows[_at(layout, b.$1, b.$2)] == back;
+}
+
 /// BFS trên đường đi từ các ô xuất phát. dist: ô -> số bước; prev: ô -> ô trước đó.
-({Map<Cell, int> dist, Map<Cell, Cell> prev}) bfs(List<String> layout, List<Cell> starts) {
+/// reverse: đi ngược chiều xe chạy (tìm các ô đi tới được starts, VD mọi ô ra được lối ra).
+({Map<Cell, int> dist, Map<Cell, Cell> prev}) bfs(List<String> layout, List<Cell> starts, {bool reverse = false}) {
   final dist = <Cell, int>{for (final s in starts) s: 0};
   final prev = <Cell, Cell>{};
   final queue = [...starts];
@@ -55,6 +68,7 @@ String? layoutError(List<String>? layout, List<String> zoneNames) {
     for (final (dr, dc) in _dirs) {
       final next = (r + dr, c + dc);
       if (!walkable.contains(_at(layout, next.$1, next.$2)) || dist.containsKey(next)) continue;
+      if (reverse ? _against(layout, next, (r, c), (-dr, -dc)) : _against(layout, (r, c), next, (dr, dc))) continue;
       dist[next] = dist[(r, c)]! + 1;
       prev[next] = (r, c);
       queue.add(next);
@@ -144,14 +158,15 @@ Map<String, dynamic>? route(List<String> layout, int r, int c, [String code = ''
   };
 }
 
-/// Mặt bằng mẫu cho bãi chung cư: lối vào / lối ra ở tường trên, 3 làn đường, khu A, B xe máy, C ô tô, D xe đạp.
+/// Mặt bằng mẫu cho bãi chung cư: lối vào / lối ra ở tường trên, khu A, B xe máy, C ô tô, D xe đạp.
+/// Đường 1 chiều: vào cổng trái đi xuống, rẽ vào 2 làn giữa chạy sang phải, lên làn phải ra cổng phải.
 const sampleLayout = [
   '##I################O##',
-  '#==AAAAAAAAAAAAAAAA==#',
-  '#====================#',
-  '#==BBBBBBBBBBBBBBBB==#',
-  '#==BBBBBBBBBBBBBBBB==#',
-  '#====================#',
-  '#==CCCCCCCC.DDDDDDD==#',
+  '#VVAAAAAAAAAAAAAAAA^^#',
+  '#VV>>>>>>>>>>>>>>>>^^#',
+  '#VVBBBBBBBBBBBBBBBB^^#',
+  '#VVBBBBBBBBBBBBBBBB^^#',
+  '#VV>>>>>>>>>>>>>>>>^^#',
+  '#VVCCCCCCCC.DDDDDDD^^#',
   '######################',
 ];

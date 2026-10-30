@@ -6,15 +6,15 @@ import '../lot.dart';
 import '../main.dart';
 
 /// Mặt bằng mẫu cho bãi chung cư (trùng sampleLayout ở backend/lib/src/layout.dart): lối vào / ra ở tường trên,
-/// 3 làn đường, khu A, B xe máy, C ô tô, D xe đạp.
+/// khu A, B xe máy, C ô tô, D xe đạp; đường 1 chiều từ cổng vào chạy vòng tới cổng ra.
 const sampleLayout = [
   '##I################O##',
-  '#==AAAAAAAAAAAAAAAA==#',
-  '#====================#',
-  '#==BBBBBBBBBBBBBBBB==#',
-  '#==BBBBBBBBBBBBBBBB==#',
-  '#====================#',
-  '#==CCCCCCCC.DDDDDDD==#',
+  '#VVAAAAAAAAAAAAAAAA^^#',
+  '#VV>>>>>>>>>>>>>>>>^^#',
+  '#VVBBBBBBBBBBBBBBBB^^#',
+  '#VVBBBBBBBBBBBBBBBB^^#',
+  '#VV>>>>>>>>>>>>>>>>^^#',
+  '#VVCCCCCCCC.DDDDDDD^^#',
   '######################',
 ];
 
@@ -65,7 +65,7 @@ class _LayoutEditorScreenState extends State<LayoutEditorScreen> {
     final types = await vehicleTypes();
     if (!mounted) return;
     final used = zones.map((z) => z['name']).toSet();
-    final free = [for (final ch in 'ABCDEFGHJKLMNPQRSTUVWXYZ'.split('')) if (!used.contains(ch)) ch];
+    final free = [for (final ch in 'ABCDEFGHJKLMNPQRSTUWXYZ'.split('')) if (!used.contains(ch)) ch];
     var name = free.first;
     var type = 'motorbike';
     final ok = await showDialog<bool>(
@@ -170,7 +170,11 @@ class _LayoutEditorScreenState extends State<LayoutEditorScreen> {
     final t = Theme.of(context).textTheme;
     final zoneType = {for (final z in zones) z['name'] as String: z['vehicle_type'] as String};
     final brushes = <(String, String, Color)>[
-      ('=', 'Đường', LotPainter.asphalt),
+      ('=', 'Đường 2 chiều', LotPainter.asphalt),
+      ('>', '1 chiều →', LotPainter.asphalt),
+      ('<', '1 chiều ←', LotPainter.asphalt),
+      ('^', '1 chiều ↑', LotPainter.asphalt),
+      ('V', '1 chiều ↓', LotPainter.asphalt),
       ('#', 'Tường', LotPainter.wall),
       ('.', 'Trống / cột', LotPainter.green),
       ('I', 'Lối vào', Colors.green.shade700),
@@ -188,7 +192,7 @@ class _LayoutEditorScreenState extends State<LayoutEditorScreen> {
         top: false,
         child: ListView(padding: const EdgeInsets.all(12), children: [
           Text('Chọn cọ rồi chạm hoặc kéo ngón tay trên lưới. Ô đậu vẽ bằng chữ của khu, phải nằm sát đường đi; '
-              'cần ít nhất 1 lối vào và 1 lối ra ở mép bãi.', style: t.bodySmall),
+              'cần ít nhất 1 lối vào và 1 lối ra ở mép bãi. Đường 1 chiều: xe chỉ chạy theo mũi tên, chỉ đường cũng theo mũi tên.', style: t.bodySmall),
           const SizedBox(height: 8),
           Wrap(spacing: 6, runSpacing: 6, children: [
             for (final (ch, label, color) in brushes)

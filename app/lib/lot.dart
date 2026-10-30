@@ -58,8 +58,10 @@ List<Cell> cellsFrom(Object? path) => [for (final p in (path as List? ?? const [
     List<String> layout, Map<String, Rec> slots, List<Cell> route, List<Cell> exitRoute) {
   final rows = layout.length, cols = layout[0].length;
   Cell rot(Cell p) => (p.$2, rows - 1 - p.$1);
+  const turned = {'>': 'V', 'V': '<', '<': '^', '^': '>'}; // mũi tên đường 1 chiều xoay theo
+  String cw(String ch) => turned[ch] ?? ch;
   return (
-    layout: [for (var i = 0; i < cols; i++) String.fromCharCodes([for (var j = 0; j < rows; j++) layout[rows - 1 - j].codeUnitAt(i)])],
+    layout: [for (var i = 0; i < cols; i++) [for (var j = 0; j < rows; j++) cw(layout[rows - 1 - j][i])].join()],
     slots: {
       for (final e in slots.entries)
         () {
@@ -159,8 +161,11 @@ class LotPainter extends CustomPainter {
 
   static const asphalt = Color(0xFF4A4F57), wall = Color(0xFF26292E), green = Color(0xFF33372F); // green: chỗ trống / cột
 
+  /// Đường 1 chiều: ký tự -> hướng xe chạy (hàng, cột).
+  static const arrows = <String, Cell>{'^': (-1, 0), '>': (0, 1), 'V': (1, 0), '<': (0, -1)};
+
   String at(int r, int c) => r < 0 || r >= layout.length || c < 0 || c >= layout[0].length ? '#' : layout[r][c];
-  bool road(int r, int c) => const {'=', 'I', 'O'}.contains(at(r, c));
+  bool road(int r, int c) => const {'=', 'I', 'O'}.contains(at(r, c)) || arrows.containsKey(at(r, c));
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -189,8 +194,22 @@ class LotPainter extends CustomPainter {
       ..strokeWidth = math.max(1, cell * 0.06);
     for (var r = 0; r < layout.length; r++) {
       for (var c = 0; c < layout[0].length; c++) {
-        if (at(r, c) != '=') continue;
         final m = center((r, c));
+        // Đường 1 chiều: chevron chỉ chiều xe chạy
+        if (arrows[at(r, c)] case (final dr, final dc)) {
+          final f = Offset(dc * cell * 0.16, dr * cell * 0.16), side = Offset(-f.dy, f.dx);
+          canvas.drawPath(
+              Path()
+                ..moveTo((m - f + side).dx, (m - f + side).dy)
+                ..lineTo((m + f).dx, (m + f).dy)
+                ..lineTo((m - f - side).dx, (m - f - side).dy),
+              Paint()
+                ..color = lane.color
+                ..style = PaintingStyle.stroke
+                ..strokeWidth = lane.strokeWidth * 1.4);
+          continue;
+        }
+        if (at(r, c) != '=') continue;
         if (road(r, c - 1) && road(r, c + 1) && !road(r - 1, c)) {
           canvas.drawLine(m - Offset(cell * 0.2, 0), m + Offset(cell * 0.2, 0), lane);
         } else if (road(r - 1, c) && road(r + 1, c) && !road(r, c - 1)) {
@@ -206,7 +225,7 @@ class LotPainter extends CustomPainter {
     for (var r = 0; r < layout.length; r++) {
       for (var c = 0; c < layout[0].length; c++) {
         final ch = layout[r][c];
-        if (!RegExp('[A-Z]').hasMatch(ch) || ch == 'I' || ch == 'O') continue;
+        if (!RegExp('[A-Z]').hasMatch(ch) || ch == 'I' || ch == 'O' || ch == 'V') continue;
         final s = slots['$r,$c'];
         final box = rect(r, c).deflate(cell * 0.06);
         fill.color = slotColor(scheme, s?['state'] as String? ?? 'free').withValues(alpha: 0.85);

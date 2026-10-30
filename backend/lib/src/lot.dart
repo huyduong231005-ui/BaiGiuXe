@@ -116,7 +116,7 @@ Map<String, dynamic> _typeInput(Req req) {
 Map<String, dynamic> _zoneInput(Req req, Map<String, Map> types) {
   final name = str(req.b('name')).toUpperCase();
   final vt = str(req.b('vehicleType'));
-  if (!zoneLetterRe.hasMatch(name)) throw HttpError(400, 'Tên khu là 1 chữ cái A-Z (trừ I, O dùng cho lối vào / lối ra)');
+  if (!zoneLetterRe.hasMatch(name)) throw HttpError(400, 'Tên khu là 1 chữ cái A-Z (trừ I, O dùng cho lối vào / lối ra, V dùng cho mũi tên đi xuống)');
   if (!types.containsKey(vt)) throw HttpError(400, 'Loại xe là một trong: ${types.keys.join(', ')}');
   return {'name': name, 'vehicle_type': vt};
 }
