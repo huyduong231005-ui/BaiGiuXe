@@ -19,10 +19,14 @@ const _keepApiAwake = Duration(minutes: 10);
 /// kết quả mới nhất hiện to, vài xe trước xếp bên dưới. Đang ở màn Quản lý mà có lượt quẹt -> tự về camera.
 /// Camera luôn bật ngầm khi đang ở màn Quản lý để lượt quẹt sau không phải chờ khởi động camera.
 class CameraScreen extends StatefulWidget {
-  const CameraScreen({super.key, required this.gate, required this.onExit});
+  const CameraScreen({super.key, required this.gate, required this.onExit, this.nested = false});
 
   final String gate;
   final VoidCallback onExit;
+
+  /// true: mở từ tab Khác của màn quản lý (đã có thanh tab bên dưới). Nút "Quản lý" đóng camera để quay về,
+  /// không dựng thêm một bộ tab quản lý chồng lên.
+  final bool nested;
 
   @override
   State<CameraScreen> createState() => _CameraScreenState();
@@ -112,13 +116,15 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   }
 
   @override
-  Widget build(BuildContext context) => IndexedStack(
-    index: showCamera ? 0 : 1,
-    children: [
-      _cameraView(),
-      ManagerHome(onChangeRole: widget.onExit, onShowCamera: () => setState(() => showCamera = true)),
-    ],
-  );
+  Widget build(BuildContext context) => widget.nested
+      ? _cameraView()
+      : IndexedStack(
+          index: showCamera ? 0 : 1,
+          children: [
+            _cameraView(),
+            ManagerHome(onChangeRole: widget.onExit, onShowCamera: () => setState(() => showCamera = true)),
+          ],
+        );
 
   /// Chọn thẻ (và cổng nếu máy lo cả 2 cổng) rồi chạy một lượt quẹt thẻ giả: camera chụp + đọc biển thật.
   Future<void> _simulate() async {
@@ -182,7 +188,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
         actions: [
           IconButton(onPressed: _simulate, icon: const Icon(Icons.touch_app_outlined), tooltip: 'Quẹt thử (không cần ESP32)'),
           TextButton.icon(
-            onPressed: () => setState(() => showCamera = false),
+            onPressed: widget.nested ? widget.onExit : () => setState(() => showCamera = false),
             icon: const Icon(Icons.dashboard),
             label: const Text('Quản lý'),
           ),

@@ -260,7 +260,8 @@ class MoreScreen extends StatelessWidget {
       ),
     );
     if (gate == null || !context.mounted) return;
-    await Navigator.push(context, MaterialPageRoute(builder: (c) => CameraScreen(gate: gate, onExit: () => Navigator.pop(c))));
+    await Navigator.push(
+        context, MaterialPageRoute(builder: (c) => CameraScreen(gate: gate, nested: true, onExit: () => Navigator.pop(c))));
   }
 
   void _open(BuildContext context, String title, Widget body) => Navigator.push(context,
