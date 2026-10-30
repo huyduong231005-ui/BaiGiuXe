@@ -227,8 +227,9 @@ class LotPainter extends CustomPainter {
     }
     for (final e in bounds.entries) {
       final b = e.value;
-      _text(canvas, 'Khu ${e.key}', Offset(b.left + cell * 0.2, b.top - cell * 0.32), cell * 0.5,
-          Colors.white.withValues(alpha: 0.9), bold: true, alignLeft: true);
+      // Khu hẹp (1-2 cột, hay gặp khi mặt bằng bị xoay) chỉ ghi chữ cái, căn giữa trên khu: không tràn sang ô cổng bên cạnh.
+      _text(canvas, b.width >= cell * 2.5 ? 'Khu ${e.key}' : e.key, Offset(b.center.dx, b.top - cell * 0.32), cell * 0.5,
+          Colors.white.withValues(alpha: 0.9), bold: true);
     }
     // Cổng
     for (final (ch, label) in [('I', 'VÀO'), ('O', 'RA')]) {
