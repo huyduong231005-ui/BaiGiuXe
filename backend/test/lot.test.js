@@ -25,14 +25,32 @@ test('bảng giá theo loại xe: 3 loại mặc định, thêm / sửa / không
   assert.equal(quote.body.fee, 25000);
 });
 
-test('khu + ô: tự sinh ô theo lưới, gán ô riêng cho cư dân, thu nhỏ / đổi tên khu', async () => {
-  assert.equal((await call('POST', '/zones', { name: 'a', vehicleType: 'tau', rows: 1, cols: 1 })).status, 400);
-  const a = await call('POST', '/zones', { name: 'a', vehicleType: 'motorbike', rows: 2, cols: 3, order: 1 });
+// Mặt bằng thử: lối vào ở cột 1, lối ra ở cột 7, một làn đường, khu A xe máy 2 ô gần cổng vào, khu C ô tô 2 ô.
+const LAYOUT = [
+  '#I#####O#',
+  '#=======#',
+  '#AA.CC..#',
+  '#########',
+];
+
+test('mặt bằng: tạo khu, vẽ ô, kiểm tra lối vào / ra / đường tới ô, giữ mã ô khi sửa, gán ô cư dân', async () => {
+  assert.equal((await call('POST', '/zones', { name: 'A', vehicleType: 'tau' })).status, 400);
+  assert.equal((await call('POST', '/zones', { name: 'I', vehicleType: 'motorbike' })).status, 400); // I, O dành cho lối vào / ra
+  const a = await call('POST', '/zones', { name: 'a', vehicleType: 'motorbike' });
   assert.equal(a.status, 201);
-  await call('POST', '/zones', { name: 'C', vehicleType: 'car', rows: 1, cols: 1, order: 2 });
-  let map = (await call('GET', '/lot/map')).body;
-  assert.deepEqual(map.zones.map((z) => [z.name, z.slots.length]), [['A', 6], ['C', 1]]);
-  assert.deepEqual(map.zones[0].slots.map((s) => s.code).slice(0, 3), ['A-01', 'A-02', 'A-03']);
+  await call('POST', '/zones', { name: 'C', vehicleType: 'car' });
+
+  const bad = async (layout) => (await call('PUT', '/lot/layout', { layout })).body.message;
+  assert.match(await bad(LAYOUT.map((l) => l.replace('CC', 'BB'))), /Khu B chưa tạo/);
+  assert.match(await bad(LAYOUT.map((l) => l.replace('O', '#'))), /lối ra/);
+  assert.match(await bad([...LAYOUT.slice(0, 3), '#.....A.#', '#########']), /không có đường xe tới/);
+  assert.match(await bad(['#I#O', '#==#', '#=']), /dài bằng nhau/);
+
+  const saved = await call('PUT', '/lot/layout', { layout: LAYOUT });
+  assert.equal(saved.status, 200);
+  assert.deepEqual(saved.body.layout, LAYOUT);
+  assert.deepEqual(saved.body.zones.map((z) => z.slots.map((s) => [s.code, s.row, s.col])),
+    [[['A-01', 2, 1], ['A-02', 2, 2]], [['C-01', 2, 4], ['C-02', 2, 5]]]);
 
   await call('POST', '/cards', { uid: 'C0000001', kind: 'monthly', plate: '59X111111', owner: 'Cư dân 1', apartment: 'a1-12.05' });
   await call('POST', '/cards', { uid: 'C0000002', kind: 'guest' });
@@ -42,20 +60,31 @@ test('khu + ô: tự sinh ô theo lưới, gán ô riêng cho cư dân, thu nh�
   const cards = (await call('GET', '/cards?q=C0000001')).body;
   assert.deepEqual([cards[0].slot_code, cards[0].apartment, cards[0].vehicle_type], ['A-01', 'A1-12.05', 'motorbike']);
 
-  assert.equal((await call('PUT', `/zones/${a.body.id}`, { name: 'A', vehicleType: 'motorbike', rows: 1, cols: 2, order: 1 })).status, 200);
-  map = (await call('GET', '/lot/map')).body;
-  assert.equal(map.zones[0].slots.length, 2);
-  assert.equal((await call('GET', '/status')).body.capacity, 3); // có sơ đồ thì sức chứa = số ô
+  // Sửa mặt bằng: dời C-02 sang cột 6. Ô giữ vị trí giữ nguyên mã (ô cư dân A-01 không bị lệch), ô mới lấy số mới.
+  const moved = LAYOUT.map((l, r) => (r === 2 ? '#AA.C.C.#' : l));
+  const m = (await call('PUT', '/lot/layout', { layout: moved })).body;
+  assert.deepEqual(m.zones[1].slots.map((s) => [s.code, s.col]), [['C-01', 4], ['C-02', 6]]);
+  assert.equal(m.zones[0].slots[0].card_uid, 'C0000001');
+  await call('PUT', '/lot/layout', { layout: LAYOUT });
+  assert.equal((await call('GET', '/status')).body.capacity, 4); // có sơ đồ thì sức chứa = số ô
+  assert.equal((await call('DELETE', `/zones/${a.body.id}`)).status, 409); // còn ô trên mặt bằng
+
+  // Đường từ cổng vào tới ô + lời chỉ dẫn, và từ ô ra cổng ra
+  const r = (await call('GET', '/lot/route?slot=c-02')).body;
+  assert.deepEqual([r.path[0], r.path.at(-1), r.exitPath.at(-1)], [[0, 1], [2, 5], [0, 7]]);
+  assert.equal(r.hint, 'Qua cổng vào, đi thẳng 1 ô, rẽ trái đi 4 ô, ô C-02 ở bên phải');
+  assert.equal((await call('GET', '/lot/route?slot=Z-99')).status, 404);
 });
 
 test('khách vãng lai được chỉ ô trống không phải ô cư dân; cư dân vào ô riêng; hết chỗ thì từ chối', async () => {
   await call('POST', '/cards', { uid: 'C0000003', kind: 'guest' });
   const guest = (await scan({ gate: 'in', uid: 'C0000002', plate: '30A11111', vehicle: 'Motorcycle' })).body;
   assert.deepEqual([guest.ok, guest.l2, guest.slot], [true, 'Moi vao o A-02', 'A-02']); // A-01 là của cư dân
+  assert.equal(guest.route.hint, 'Qua cổng vào, đi thẳng 1 ô, rẽ trái đi 1 ô, ô A-02 ở bên phải');
   const full = (await scan({ gate: 'in', uid: 'C0000003', plate: '30A22222', vehicle: 'Motorcycle' })).body;
   assert.deepEqual([full.ok, full.l2], [false, 'Het cho xe may']);
   const car = (await scan({ gate: 'in', uid: 'C0000003', plate: '51G33333', vehicle: 'Sedan' })).body;
-  assert.deepEqual([car.ok, car.slot], [true, 'C-01']); // OCR nhận ra ô tô -> khu ô tô
+  assert.deepEqual([car.ok, car.slot], [true, 'C-01']); // OCR nhận ra ô tô -> ô tô trống gần cổng vào nhất
   const resident = (await scan({ gate: 'in', uid: 'C0000001', plate: '59X111111' })).body;
   assert.deepEqual([resident.ok, resident.slot], [true, 'A-01']);
 

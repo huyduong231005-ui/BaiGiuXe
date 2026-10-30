@@ -1,13 +1,13 @@
-// Sơ đồ bãi chung cư: loại xe + bảng giá, khu, ô đậu. Cư dân thuê vé tháng có ô riêng (slot.card_uid);
-// khách vãng lai được API chỉ ô trống gần cổng nhất, đúng loại xe, không đụng ô của cư dân.
+// Sơ đồ bãi chung cư: loại xe + bảng giá, khu, mặt bằng (lối vào, lối ra, đường đi, ô đậu), chỉ đường.
+// Cư dân thuê vé tháng có ô riêng (slot.card_uid); khách vãng lai được API chỉ ô trống gần lối vào nhất theo
+// quãng đường xe chạy, đúng loại xe, không đụng ô của cư dân, kèm đường đi từ cổng tới ô.
 import { Router } from 'express';
 import { HttpError, str } from './auth.js';
-import { Card, insert, row, Session, Slot, VehicleType, Zone } from './db.js';
+import { Card, insert, row, Session, Settings, Slot, VehicleType, Zone } from './db.js';
 import { IN_USE } from './guards.js';
+import { cellsOf, layoutError, route, slotDistances, ZONE_LETTER_RE } from './layout.js';
 
 const CODE_RE = /^[a-z][a-z0-9_]{1,19}$/;
-const ZONE_RE = /^[A-Z0-9]{1,4}$/;
-const MAX_GRID = 20;
 
 /** Loại xe theo code: { motorbike: {...}, car: {...} }. */
 export async function vehicleTypes() {
@@ -26,7 +26,7 @@ export function vehicleFromOcr(type) {
   return /motor/i.test(type) ? 'motorbike' : 'car';
 }
 
-const slotCode = (zone, n) => `${zone}-${String(n).padStart(2, '0')}`;
+const getLayout = async () => (await Settings.findById(1, { layout: 1 }).lean())?.layout ?? [];
 
 /** Ô đang có xe: code -> lượt gửi đang mở. */
 async function occupiedSlots() {
@@ -35,8 +35,8 @@ async function occupiedSlots() {
 }
 
 /**
- * Chọn ô cho xe vào. Thẻ tháng có ô riêng -> ô đó. Còn lại: ô trống đầu tiên (khu gần cổng trước, rồi theo hàng / cột),
- * đúng loại xe, không phải ô riêng của cư dân, không tạm khoá. Trả { code } | { full: true } | null (bãi chưa vẽ sơ đồ).
+ * Chọn ô cho xe vào. Thẻ tháng có ô riêng -> ô đó. Còn lại: ô trống gần lối vào nhất theo quãng đường xe chạy,
+ * đúng loại xe, không phải ô riêng của cư dân, không tạm khoá. Trả { code } | { full: true } | null (bãi chưa vẽ).
  */
 export async function assignSlot(card, vehicleType) {
   if (!(await Slot.exists({}))) return null;
@@ -44,47 +44,61 @@ export async function assignSlot(card, vehicleType) {
     const own = await Slot.findOne({ card_uid: card.uid }).lean();
     if (own) return { code: own.code };
   }
-  const zones = await Zone.find({ vehicle_type: vehicleType }).sort({ order: 1, name: 1 }).lean();
-  const busy = await occupiedSlots();
-  for (const z of zones) {
-    const slots = await Slot.find({ zone_id: z._id, card_uid: null, active: true }).sort({ row: 1, col: 1 }).lean();
-    const free = slots.find((s) => !busy.has(s.code));
-    if (free) return { code: free.code };
-  }
-  return { full: true };
+  const [busy, layout, slots] = await Promise.all([
+    occupiedSlots(), getLayout(), Slot.find({ vehicle_type: vehicleType, card_uid: null, active: true }).lean(),
+  ]);
+  const dist = slotDistances(layout);
+  const free = slots.filter((s) => !busy.has(s.code) && dist.has(`${s.row},${s.col}`))
+    .sort((a, b) => dist.get(`${a.row},${a.col}`) - dist.get(`${b.row},${b.col}`) || a.code.localeCompare(b.code));
+  return free.length ? { code: free[0].code } : { full: true };
 }
 
-/** Tạo / bổ sung ô cho khu theo lưới rows x cols; bỏ ô thừa khi thu nhỏ (chỉ khi ô đó trống và chưa gán cư dân). */
-async function layoutZone(zone) {
-  const want = new Set();
-  let n = 0;
-  for (let r = 0; r < zone.rows; r++) {
-    for (let c = 0; c < zone.cols; c++) {
-      const code = slotCode(zone.name, ++n);
-      want.add(code);
-      await Slot.updateOne({ code }, { $set: { zone_id: zone._id, row: r, col: c, vehicle_type: zone.vehicle_type } })
-        .then(async ({ matchedCount }) => {
-          if (!matchedCount) await insert(Slot, { code, zone_id: zone._id, row: r, col: c, vehicle_type: zone.vehicle_type });
-        });
+/** Đường từ lối vào tới ô (và từ ô ra lối ra) + lời chỉ dẫn. null nếu ô không có trên mặt bằng. */
+export async function slotRoute(code) {
+  const slot = await Slot.findOne({ code }).lean();
+  if (!slot) return null;
+  const r = route(await getLayout(), slot.row, slot.col, slot.code);
+  return r && { slot: slot.code, ...r };
+}
+
+/**
+ * Đồng bộ ô đậu theo mặt bằng mới. Ô giữ nguyên mã nếu vẫn ở đúng vị trí và cùng khu (không làm lệch ô của cư dân);
+ * ô mới lấy số tiếp theo của khu. Ô bị xoá khỏi mặt bằng mà đang có xe hoặc đã gán cư dân thì từ chối.
+ */
+async function syncSlots(layout) {
+  const zones = new Map((await Zone.find().lean()).map((z) => [z.name, z]));
+  const old = await Slot.find().lean();
+  const byPos = new Map(old.map((s) => [`${s.row},${s.col}`, s]));
+  const keep = new Set();
+  const created = [];
+  for (const [r, c] of cellsOf(layout, (ch) => ZONE_LETTER_RE.test(ch))) {
+    const z = zones.get(layout[r][c]);
+    const s = byPos.get(`${r},${c}`);
+    if (s && s.zone_id === z._id) {
+      keep.add(s._id);
+      if (s.vehicle_type !== z.vehicle_type) await Slot.updateOne({ _id: s._id }, { vehicle_type: z.vehicle_type });
+    } else {
+      created.push({ r, c, z });
     }
   }
-  const extra = await Slot.find({ zone_id: zone._id, code: { $nin: [...want] } }).lean();
+  const removed = old.filter((s) => !keep.has(s._id));
   const busy = await occupiedSlots();
-  if (extra.some((s) => s.card_uid || busy.has(s.code))) throw new HttpError(409, 'Có ô sắp bị bỏ đang có xe hoặc đã gán cư dân');
-  await Slot.deleteMany({ _id: { $in: extra.map((s) => s._id) } });
-}
-
-function zoneInput(body, types) {
-  const name = str(body?.name).toUpperCase();
-  const vt = str(body?.vehicleType);
-  const [rows, cols, order] = [body?.rows, body?.cols, body?.order ?? 0];
-  if (!ZONE_RE.test(name)) throw new HttpError(400, 'Tên khu 1-4 ký tự chữ / số (VD: A, B1, OTO)');
-  if (!types[vt]) throw new HttpError(400, `Loại xe là một trong: ${Object.keys(types).join(', ')}`);
-  if (![rows, cols].every((v) => Number.isInteger(v) && v >= 1 && v <= MAX_GRID)) {
-    throw new HttpError(400, `Số hàng / cột từ 1 đến ${MAX_GRID}`);
+  const blocked = removed.filter((s) => s.card_uid || busy.has(s.code));
+  if (blocked.length) {
+    throw new HttpError(409, `Ô ${blocked.map((s) => s.code).slice(0, 5).join(', ')} đang có xe hoặc đã gán cư dân, không xoá khỏi mặt bằng được`);
   }
-  if (!Number.isInteger(order)) throw new HttpError(400, 'Thứ tự là số nguyên');
-  return { name, vehicle_type: vt, rows, cols, order };
+  await Slot.deleteMany({ _id: { $in: removed.map((s) => s._id) } });
+  // Số tiếp theo của mỗi khu: lớn hơn mọi số đang dùng
+  const next = new Map();
+  for (const s of await Slot.find({}, { code: 1 }).lean()) {
+    const [zn, n] = s.code.split('-');
+    next.set(zn, Math.max(next.get(zn) ?? 0, Number(n)));
+  }
+  for (const { r, c, z } of created) {
+    const n = (next.get(z.name) ?? 0) + 1;
+    next.set(z.name, n);
+    await insert(Slot, { code: `${z.name}-${String(n).padStart(2, '0')}`, zone_id: z._id, row: r, col: c, vehicle_type: z.vehicle_type });
+  }
 }
 
 function typeInput(body) {
@@ -95,14 +109,23 @@ function typeInput(body) {
   return { name, price_day: prices[0], price_night: prices[1], price_month: prices[2] };
 }
 
-/** Sơ đồ bãi đầy đủ: khu + ô kèm trạng thái (free | resident | parked) và xe đang đậu. */
+function zoneInput(body, types) {
+  const name = str(body?.name).toUpperCase();
+  const vt = str(body?.vehicleType);
+  if (!ZONE_LETTER_RE.test(name)) throw new HttpError(400, 'Tên khu là 1 chữ cái A-Z (trừ I, O dùng cho lối vào / lối ra)');
+  if (!types[vt]) throw new HttpError(400, `Loại xe là một trong: ${Object.keys(types).join(', ')}`);
+  return { name, vehicle_type: vt };
+}
+
+/** Sơ đồ bãi đầy đủ: mặt bằng + khu + ô kèm trạng thái (free | resident | parked | off) và xe đang đậu. */
 export async function lotMap({ withPlates = true } = {}) {
-  const [zones, slots, busy, types] = await Promise.all([
-    Zone.find().sort({ order: 1, name: 1 }).lean(), Slot.find().sort({ row: 1, col: 1 }).lean(), occupiedSlots(), vehicleTypes(),
+  const [zones, slots, busy, types, layout] = await Promise.all([
+    Zone.find().sort({ name: 1 }).lean(), Slot.find().sort({ code: 1 }).lean(), occupiedSlots(), vehicleTypes(), getLayout(),
   ]);
   const owners = new Map((await Card.find({ uid: { $in: slots.map((s) => s.card_uid).filter(Boolean) } },
     { uid: 1, owner: 1, apartment: 1, plate: 1 }).lean()).map((c) => [c.uid, c]));
   return {
+    layout,
     types: Object.values(types),
     zones: zones.map((z) => ({
       ...row(z),
@@ -132,16 +155,38 @@ export async function freeByType() {
       if (s.state === 'off') continue;
       t.capacity++;
       if (s.state !== 'parked') t.free++;
-      if (s.state === 'free' && !s.card_uid) t.visitorFree++;
+      if (s.state === 'free') t.visitorFree++;
     }
   }
   return out;
+}
+
+/** Đường tới ô: ai đăng nhập cũng xem được (cư dân xem đường tới ô của mình, ĐT cổng chỉ đường cho khách). */
+export async function routeHandler(req, res) {
+  const r = await slotRoute(str(req.query.slot).toUpperCase());
+  if (!r) throw new HttpError(404, 'Không có ô này trên mặt bằng');
+  res.json(r);
+}
+
+/** Kiểm tra + lưu mặt bằng, đồng bộ ô đậu. */
+export async function applyLayout(raw) {
+  const layout = Array.isArray(raw) ? raw.map((l) => String(l).toUpperCase()) : null;
+  const err = layoutError(layout, (await Zone.find({}, { name: 1 }).lean()).map((z) => z.name));
+  if (err) throw new HttpError(400, err);
+  await syncSlots(layout);
+  await Settings.updateOne({ _id: 1 }, { layout });
 }
 
 export function lotRouter() {
   const router = Router();
 
   router.get('/lot/map', async (_req, res) => res.json(await lotMap()));
+
+  // Lưu mặt bằng: kiểm tra lối vào / ra, mọi ô đậu có đường tới, rồi đồng bộ ô đậu.
+  router.put('/lot/layout', async (req, res) => {
+    await applyLayout(req.body?.layout);
+    res.json(await lotMap());
+  });
 
   // ---- Loại xe + bảng giá ----
   router.get('/vehicle-types', async (_req, res) => res.json(Object.values(await vehicleTypes())));
@@ -168,42 +213,29 @@ export function lotRouter() {
     res.status(204).end();
   });
 
-  // ---- Khu (tự sinh ô theo lưới) ----
-  router.post('/zones', async (req, res) => {
-    const zone = await insert(Zone, zoneInput(req.body, await vehicleTypes()));
-    await layoutZone({ ...zone, _id: zone.id });
-    res.status(201).json(zone);
-  });
+  // ---- Khu (ô của khu vẽ trên mặt bằng bằng chữ cái tên khu) ----
+  router.post('/zones', async (req, res) => res.status(201).json(await insert(Zone, zoneInput(req.body, await vehicleTypes()))));
 
   router.put('/zones/:id', async (req, res) => {
     const id = Number(req.params.id) || 0;
     const old = await Zone.findById(id).lean();
     if (!old) throw new HttpError(404, 'Không có khu này');
     const data = zoneInput(req.body, await vehicleTypes());
-    if (data.name !== old.name || data.vehicle_type !== old.vehicle_type) {
-      const busy = await occupiedSlots();
+    if (data.name !== old.name) throw new HttpError(400, 'Không đổi tên khu (tên trùng ký tự trên mặt bằng); tạo khu mới rồi vẽ lại');
+    if (data.vehicle_type !== old.vehicle_type) {
       const slots = await Slot.find({ zone_id: id }).lean();
-      if (slots.some((s) => busy.has(s.code))) throw new HttpError(409, 'Khu đang có xe, không đổi tên / loại xe được');
-      if (data.vehicle_type !== old.vehicle_type && slots.some((s) => s.card_uid)) {
-        throw new HttpError(409, 'Khu có ô đã gán cư dân, không đổi loại xe được');
-      }
-      // Đổi tên khu: đổi mã các ô theo, giữ ô đã gán cư dân.
-      for (const s of slots) await Slot.updateOne({ _id: s._id }, { code: `tmp-${s._id}` });
-      for (const s of slots) await Slot.updateOne({ _id: s._id }, { code: slotCode(data.name, s.row * old.cols + s.col + 1) });
+      const busy = await occupiedSlots();
+      if (slots.some((s) => s.card_uid || busy.has(s.code))) throw new HttpError(409, 'Khu đang có xe hoặc có ô cư dân, không đổi loại xe được');
+      await Slot.updateMany({ zone_id: id }, { vehicle_type: data.vehicle_type });
     }
-    const zone = row(await Zone.findByIdAndUpdate(id, data, { returnDocument: 'after' }).lean());
-    await layoutZone({ ...zone, _id: id });
-    res.json(zone);
+    res.json(row(await Zone.findByIdAndUpdate(id, data, { returnDocument: 'after' }).lean()));
   });
 
   router.delete('/zones/:id', async (req, res) => {
-    const id = Number(req.params.id) || 0;
-    if (!(await Zone.exists({ _id: id }))) throw new HttpError(404, 'Không có khu này');
-    const busy = await occupiedSlots();
-    const slots = await Slot.find({ zone_id: id }).lean();
-    if (slots.some((s) => busy.has(s.code) || s.card_uid)) throw new HttpError(409, 'Khu đang có xe hoặc có ô của cư dân');
-    await Slot.deleteMany({ zone_id: id });
-    await Zone.deleteOne({ _id: id });
+    const z = await Zone.findById(Number(req.params.id) || 0).lean();
+    if (!z) throw new HttpError(404, 'Không có khu này');
+    if (await Slot.exists({ zone_id: z._id })) throw new HttpError(409, `Khu ${z.name} còn ô trên mặt bằng, xoá các ô đó trước`);
+    await Zone.deleteOne({ _id: z._id });
     res.status(204).end();
   });
 

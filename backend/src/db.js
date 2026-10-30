@@ -55,6 +55,7 @@ export const Settings = model('Settings', new Schema({
   _id: Number, // luôn = 1
   capacity: { type: Number, default: 50 }, // dùng khi chưa vẽ sơ đồ ô đậu; có ô thì sức chứa = số ô
   night_mark: { type: String, default: '22:00:00' },
+  layout: { type: [String], default: [] }, // mặt bằng bãi dạng lưới ký tự (xem layout.js)
   lot_name: { type: String, default: 'Bãi giữ xe' },
   address: S,
   lat: N,
@@ -71,17 +72,14 @@ export const VehicleType = model('VehicleType', new Schema({
   price_month: { type: Number, default: 0 },
 }, opts), 'vehicle_types');
 
-// Khu đậu xe trên sơ đồ: lưới rows x cols ô, cùng một loại xe. order = thứ tự gần cổng (nhỏ = gần).
+// Khu đậu xe: tên 1 chữ cái (trùng ký tự vẽ ô của khu trên mặt bằng), cùng một loại xe.
 export const Zone = model('Zone', new Schema({
   _id: Number,
   name: { type: String, required: true, unique: true },
   vehicle_type: { type: String, required: true },
-  rows: { type: Number, default: 1 },
-  cols: { type: Number, default: 1 },
-  order: { type: Number, default: 0 },
 }, opts), 'zones');
 
-// Ô đậu. card_uid = ô riêng của cư dân (thẻ tháng); null = ô cho khách vãng lai.
+// Ô đậu, sinh từ mặt bằng (row, col = vị trí trên lưới). card_uid = ô riêng của cư dân (thẻ tháng); null = ô cho khách.
 export const Slot = model('Slot', new Schema({
   _id: Number,
   code: { type: String, required: true, unique: true }, // VD: A-01

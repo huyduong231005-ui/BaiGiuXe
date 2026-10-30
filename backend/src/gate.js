@@ -6,7 +6,7 @@ import { HttpError, str } from './auth.js';
 import { Attendance, Card, GateEvent, Guard, insert, PlateImage, row, Session, ShiftDef, Slot } from './db.js';
 import { findGuard } from './guards.js';
 import { closeSession, feeNow, parkingStatus, sessionPrice, ymd } from './parking.js';
-import { assignSlot, vehicleFromOcr, vehicleTypes } from './lot.js';
+import { assignSlot, slotRoute, vehicleFromOcr, vehicleTypes } from './lot.js';
 import { IMG_PATH_RE } from './plates.js';
 import { calcFee, decideEntry, decideExit, hm, MAX_SHIFT_MS, monthlyValid, nearestShift, normPlate, oledName } from './rules.js';
 
@@ -53,7 +53,9 @@ async function enter(uid, read, now) {
     if (err.code !== DUPLICATE_KEY) throw err;
     return { ok: false, open: false, message: 'Xe da o trong bai' };
   }
-  return slot ? { ...d, message: `Moi vao o ${slot.code}`, slot: slot.code, vehicleType } : { ...d, vehicleType };
+  if (!slot) return { ...d, vehicleType };
+  // Đường từ cổng vào tới ô: ĐT cổng vẽ cho khách xem, lời chỉ dẫn hiện trên màn hình.
+  return { ...d, message: `Moi vao o ${slot.code}`, slot: slot.code, vehicleType, route: await slotRoute(slot.code) };
 }
 
 /** Xe ra: biển ra phải khớp biển lúc vào, đóng lượt kèm phí. */

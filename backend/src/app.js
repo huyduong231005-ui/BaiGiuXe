@@ -5,7 +5,7 @@ import { authRouter, HttpError, publicUser, requireAuth, updateProfile } from '.
 import { adminRouter } from './admin.js';
 import { customerRouter, requestsRouter } from './customer.js';
 import { gateRouter } from './gate.js';
-import { lotMap, lotRouter } from './lot.js';
+import { lotMap, lotRouter, routeHandler } from './lot.js';
 import { statsRouter } from './stats.js';
 import { guardsRouter, meAttendance } from './guards.js';
 import { openapi } from './openapi.js';
@@ -42,6 +42,7 @@ export function createApp(deps) {
   app.get('/me/attendance', auth(), meAttendance());
   // Sơ đồ bãi không kèm biển số / chủ xe: cư dân xem ô của mình, khách xem chỗ trống.
   app.get('/lot/map/public', auth(), async (_req, res) => res.json(await lotMap({ withPlates: false })));
+  app.get('/lot/route', auth(), routeHandler);
 
   app.use('/admin', auth('admin'), adminRouter(deps));
   app.use('/me', auth('customer')); // các API /me/... còn lại là của khách hàng (chủ vé tháng)

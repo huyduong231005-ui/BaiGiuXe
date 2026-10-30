@@ -6,6 +6,8 @@ import mongoose from 'mongoose';
 import {
   Attendance, Card, GateEvent, Guard, initDb, insert, Payment, Session, Settings, Slot, TicketRequest, User, Zone,
 } from '../src/db.js';
+import { SAMPLE_LAYOUT } from '../src/layout.js';
+import { applyLayout } from '../src/lot.js';
 
 const PASSWORD = 'demo1234';
 const GUARD = 'Nguyễn Văn Tuấn';
@@ -35,8 +37,8 @@ const at = (daysAgo, hm) => {
 const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 const hoursAgo = (h) => new Date(Date.now() - h * 3600e3);
 
-// Sơ đồ bãi demo (chỉ tạo khi bãi chưa có khu nào): 2 khu xe máy gần cổng, 1 khu ô tô.
-const ZONES = [['A', 'motorbike', 2, 6, 1], ['B', 'motorbike', 2, 6, 2], ['C', 'car', 1, 4, 3]];
+// Mặt bằng demo (chỉ tạo khi bãi chưa vẽ mặt bằng): A, B xe máy, C ô tô, D xe đạp (xem SAMPLE_LAYOUT).
+const ZONES = [['A', 'motorbike'], ['B', 'motorbike'], ['C', 'car'], ['D', 'bicycle']];
 
 async function remove() {
   const users = await User.find({ username: { $in: USERS.map((u) => u[0]) } }, { _id: 1 }).lean();
@@ -64,16 +66,12 @@ if (process.argv.includes('--remove')) {
       guard_id: role === 'guard' ? g.id : null, active: true })).id;
   }
 
-  if (!(await Zone.exists({}))) {
-    for (const [name, vehicleType, rows, cols, order] of ZONES) {
-      const z = await insert(Zone, { name, vehicle_type: vehicleType, rows, cols, order });
-      let n = 0;
-      for (let r = 0; r < rows; r++) {
-        for (let c = 0; c < cols; c++) {
-          await insert(Slot, { code: `${name}-${String(++n).padStart(2, '0')}`, zone_id: z.id, row: r, col: c, vehicle_type: vehicleType });
-        }
-      }
-    }
+  if (!(await Settings.findById(1).lean())?.layout?.length) {
+    // ponytail: bãi demo chưa có mặt bằng thì xoá sơ đồ cũ dạng lưới (bản trước) rồi vẽ lại theo mặt bằng mẫu.
+    await Slot.deleteMany({});
+    await Zone.deleteMany({});
+    for (const [name, vehicleType] of ZONES) await insert(Zone, { name, vehicle_type: vehicleType });
+    await applyLayout(SAMPLE_LAYOUT);
   }
 
   // Thẻ: khach01 cư dân xe máy còn hạn (xe đang trong bãi, ô A-01), khach02 cư dân ô tô hết hạn (đang chờ gia hạn, ô C-01),
