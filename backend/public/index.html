@@ -59,6 +59,8 @@
     <tr><td class="m GET">GET</td><td class="p">/status</td><td>Sức chứa, số xe đang gửi, số chỗ trống</td><td class="r">công khai</td></tr>
     <tr><td class="m POST">POST</td><td class="p">/fees/quote</td><td>Tính phí theo bảng giá hiện tại: giá ngày / số đêm × giá đêm, vé tháng miễn phí</td><td class="r">công khai</td></tr>
     <tr><td class="m GET">GET</td><td class="p">/sessions</td><td>Lượt gửi theo ngày (?date=YYYY-MM-DD), tìm biển (?plate=), xe đang trong bãi (?open=true), kèm tổng doanh thu</td><td class="r">quản lý</td></tr>
+    <tr><td class="m GET">GET</td><td class="p">/sessions/lookup</td><td>Tra cứu xe trong bãi theo biển chụp bằng điện thoại (lệch tối đa 1 ký tự), kèm phí nếu ra bây giờ</td><td class="r">quản lý</td></tr>
+    <tr><td class="m GET">GET</td><td class="p">/reports/monthly.xlsx</td><td>Báo cáo tháng ra Excel: doanh thu theo ngày, lượt gửi, bảng công bảo vệ</td><td class="r">quản lý</td></tr>
     <tr><td class="m GET">GET</td><td class="p">/sessions/:id/fee</td><td>Phí nếu cho xe ra ngay bây giờ</td><td class="r">quản lý</td></tr>
     <tr><td class="m POST">POST</td><td class="p">/sessions/:id/release</td><td>Mất thẻ: đóng lượt, tính phí, mở barrier cổng ra</td><td class="r">quản lý</td></tr>
     <tr><td class="m POST">POST</td><td class="p">/gate/open</td><td>Mở barrier cổng ra từ xa (ĐT cổng ra chuyển lệnh qua MQTT tới ESP32)</td><td class="r">quản lý</td></tr>

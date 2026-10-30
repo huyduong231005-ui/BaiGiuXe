@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../api.dart';
 import '../logic.dart';
 import '../main.dart';
+import '../nfc.dart';
 
 final _uidRe = RegExp(r'^[0-9A-F]{8,20}$');
 const _scanPollEvery = Duration(seconds: 2);
@@ -192,13 +193,16 @@ class _CardFormState extends State<CardForm> {
   Rec? existing; // thẻ vừa quẹt đã có trong hệ thống
   String? error;
   bool saving = false;
+  bool hasNfc = false, nfcReading = false;
 
   bool get isNew => widget.card == null;
 
   @override
   void initState() {
     super.initState();
-    if (isNew) _waitScan();
+    if (!isNew) return;
+    _waitScan();
+    nfcAvailable().then((v) => mounted ? setState(() => hasNfc = v) : null);
   }
 
   /// Chờ lần quẹt thẻ kế tiếp ở bất kỳ cổng nào để lấy UID: hỏi API mỗi 2 giây thẻ nào vừa quẹt sau lúc bắt đầu chờ.
@@ -233,9 +237,28 @@ class _CardFormState extends State<CardForm> {
     if (mounted) setState(() => listening = null);
   }
 
+  /// Chạm thẻ vào mặt lưng điện thoại thay cho quẹt ở cổng: không cần ESP32 hay ĐT camera đang chạy.
+  Future<void> _readNfc() async {
+    _stopScan();
+    setState(() => nfcReading = true);
+    try {
+      final u = await readCardUid();
+      if (u == null) {
+        if (mounted) showError(context, 'Không đọc được thẻ (hết 30 giây hoặc thẻ không phải chuẩn 13,56 MHz)');
+        return;
+      }
+      await _onScanned({'uid': u, 'registered': true});
+    } catch (e) {
+      if (mounted) showError(context, 'Lỗi NFC: $e');
+    } finally {
+      if (mounted) setState(() => nfcReading = false);
+    }
+  }
+
   @override
   void dispose() {
     listening?.cancel();
+    if (nfcReading) cancelNfc();
     super.dispose();
   }
 
@@ -280,6 +303,17 @@ class _CardFormState extends State<CardForm> {
             onRescan: _waitScan,
             onCancel: _stopScan,
           ),
+          if (hasNfc)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: OutlinedButton.icon(
+                onPressed: nfcReading ? null : _readNfc,
+                icon: nfcReading
+                    ? const SizedBox.square(dimension: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Icon(Icons.nfc),
+                label: Text(nfcReading ? 'Chạm thẻ vào mặt sau điện thoại...' : 'Đọc thẻ bằng NFC của điện thoại'),
+              ),
+            ),
           if (existing != null)
             Card(
               color: s.errorContainer,

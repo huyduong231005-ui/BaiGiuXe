@@ -1,7 +1,7 @@
 // Bãi xe: số chỗ trống, lượt gửi, lịch sử + doanh thu, mở cổng, cho xe ra khi mất thẻ, thẻ, cài đặt.
 import { Router } from 'express';
 import { HttpError, str } from './auth.js';
-import { calcFee, minutesOf, nightsCrossed, normPlate } from './rules.js';
+import { calcFee, minutesOf, nightsCrossed, normPlate, samePlate } from './rules.js';
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
@@ -89,6 +89,25 @@ export function viewRouter({ db }) {
        from sessions s left join cards c on c.uid = s.card_uid left join guards g on g.id = s.override_by
        where ${where.join(' and ')} order by s.time_in desc limit ${MAX_ROWS}`, params);
     res.json({ count: rows.length, revenue: rows.reduce((a, s) => a + (s.fee ?? 0), 0), sessions: rows });
+  });
+
+  // Tra cứu xe đang trong bãi theo biển (quản lý chụp biển bằng điện thoại hoặc gõ tay).
+  // So khớp như ở cổng: lệch tối đa 1 ký tự, xét cả các phương án đọc khác (candidates=a,b,c) của OCR.
+  router.get('/sessions/lookup', async (req, res) => {
+    const reads = [req.query.plate, ...str(req.query.candidates).split(',')].map(normPlate).filter(Boolean);
+    if (!reads.length) throw new HttpError(400, 'Cần biển số cần tra');
+    const { rows } = await db.query(
+      `select s.*, c.kind as card_kind, c.owner as card_owner from sessions s left join cards c on c.uid = s.card_uid
+       where s.time_out is null order by s.time_in desc`);
+    const matches = rows.filter((s) => reads.some((p) => samePlate(s.plate_in, p)));
+    const settings = await getSettings(db);
+    const now = new Date();
+    res.json({
+      plate: reads[0],
+      matches: matches.map((s) => ({
+        ...s, exact: normPlate(s.plate_in) === reads[0], feeNow: calcFee(s.time_in, now, settings, s.card_kind === 'monthly'),
+      })),
+    });
   });
 
   router.get('/sessions/:id/fee', async (req, res) => {

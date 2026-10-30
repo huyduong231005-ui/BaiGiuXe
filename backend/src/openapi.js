@@ -31,6 +31,8 @@ export const openapi = {
     '/status': { get: op('Bãi xe', 'Sức chứa, xe đang gửi, chỗ trống', { secure: false }) },
     '/fees/quote': { post: op('Bãi xe', 'Tính phí theo bảng giá hiện tại', { secure: false, body: { timeIn: '2026-10-30T20:00:00+07:00', timeOut: '2026-10-31T07:00:00+07:00', kind: 'guest' } }) },
     '/sessions': { get: op('Bãi xe', 'Lượt gửi theo ngày / xe trong bãi, kèm doanh thu', { params: [q('date', 'Ngày YYYY-MM-DD (mặc định hôm nay)', '2026-10-30'), q('plate', 'Tìm biển (vào hoặc ra)', '59X1'), q('open', 'true = xe đang trong bãi', 'false')] }) },
+    '/sessions/lookup': { get: op('Bãi xe', 'Tra cứu xe trong bãi theo biển (lệch 1 ký tự), kèm phí tạm tính', { params: [q('plate', 'Biển cần tra', '30A99998'), q('candidates', 'Phương án đọc khác của OCR, cách nhau dấu phẩy', '')] }) },
+    '/reports/monthly.xlsx': { get: op('Bãi xe', 'Báo cáo tháng Excel: doanh thu, lượt gửi, bảng công', { params: [q('month', 'YYYY-MM', '2026-10')] }) },
     '/sessions/{id}/fee': { get: op('Bãi xe', 'Phí nếu cho ra bây giờ', { params: [p('id', 1)] }) },
     '/sessions/{id}/release': { post: op('Bãi xe', 'Mất thẻ: đóng lượt + mở cổng ra', { params: [p('id', 1)] }) },
     '/gate/open': { post: op('Bãi xe', 'Mở barrier cổng ra từ xa') },

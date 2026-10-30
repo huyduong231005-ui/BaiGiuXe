@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../api.dart';
 import '../logic.dart';
 import '../main.dart';
+import 'lookup_screen.dart';
 
 /// Tài khoản API không có phiên Supabase nên không nghe Realtime được: tải lại định kỳ.
 const _refreshEvery = Duration(seconds: 5);
@@ -154,6 +155,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ),
             ]),
           ),
+        ),
+        const SizedBox(height: 8),
+        FilledButton.tonalIcon(
+          onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const LookupScreen())),
+          icon: const Icon(Icons.photo_camera_outlined),
+          label: const Text('Tra cứu xe bằng camera'),
         ),
         const SizedBox(height: 20),
         Text('Xe trong bãi (${parked.length})', style: header),

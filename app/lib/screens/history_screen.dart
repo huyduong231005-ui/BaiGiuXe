@@ -4,6 +4,7 @@ import '../api.dart';
 import '../logic.dart';
 import '../main.dart';
 import 'dashboard_screen.dart' show hhmm;
+import 'revenue_chart.dart';
 
 String _ymd(DateTime d) => '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
 
@@ -19,6 +20,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
   final plate = TextEditingController();
   List<Rec> rows = [];
   int total = 0;
+  final chart = GlobalKey<RevenueChartState>();
 
   @override
   void initState() {
@@ -66,7 +68,13 @@ class _HistoryScreenState extends State<HistoryScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Column(children: [
+    // Một ListView cuộn chung: biểu đồ 7 ngày ở đầu, rồi bộ lọc và danh sách lượt của ngày đang chọn.
+    return RefreshIndicator(
+      onRefresh: () async {
+        await Future.wait([_load(), chart.currentState?.reload() ?? Future.value()]);
+      },
+      child: ListView(children: [
+      Padding(padding: const EdgeInsets.fromLTRB(8, 8, 8, 0), child: RevenueChart(key: chart)),
       Padding(
         padding: const EdgeInsets.all(8),
         child: Row(children: [
@@ -88,20 +96,14 @@ class _HistoryScreenState extends State<HistoryScreen> {
       ListTile(
         title: Text('${rows.length} lượt · doanh thu $total đ', style: Theme.of(context).textTheme.titleMedium),
       ),
-      Expanded(
-        child: ListView.builder(
-          itemCount: rows.length,
-          itemBuilder: (_, i) {
-            final s = rows[i];
-            return ListTile(
-              title: Text(s['plate_in'] as String? ?? '(không rõ biển)'),
-              subtitle: Text('Vào ${hhmm(s['time_in'] as String)} · Ra ${hhmm(s['time_out'] as String?)}'),
-              trailing: Text(s['fee'] == null ? 'Đang gửi' : '${s['fee']} đ'),
-              onTap: () => _show(s),
-            );
-          },
+      for (final s in rows)
+        ListTile(
+          title: Text(s['plate_in'] as String? ?? '(không rõ biển)'),
+          subtitle: Text('Vào ${hhmm(s['time_in'] as String)} · Ra ${hhmm(s['time_out'] as String?)}'),
+          trailing: Text(s['fee'] == null ? 'Đang gửi' : '${s['fee']} đ'),
+          onTap: () => _show(s),
         ),
-      ),
-    ]);
+    ]),
+    );
   }
 }

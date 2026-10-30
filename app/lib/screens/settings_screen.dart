@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../api.dart';
 import '../logic.dart';
 import '../main.dart';
+import 'accounts_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key, this.onChangeRole});
@@ -176,8 +177,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
       const SizedBox(height: 8),
       Card(
         child: Column(children: [
-          if (api.session.value case final u?)
-            ListTile(leading: const Icon(Icons.person_outline), title: Text(u.displayName), subtitle: Text('${u.email} · ${u.role}')),
+          if (api.session.value case final u?) ...[
+            ListTile(
+              leading: const Icon(Icons.person_outline),
+              title: Text(u.displayName),
+              subtitle: Text('${u.email} · đổi họ tên, mật khẩu'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ProfileScreen())),
+            ),
+            if (u.role == 'admin')
+              ListTile(
+                leading: const Icon(Icons.manage_accounts_outlined),
+                title: const Text('Quản lý tài khoản'),
+                subtitle: const Text('Vai trò, khoá, gắn hồ sơ bảo vệ'),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const AccountsScreen())),
+              ),
+          ],
           if (widget.onChangeRole != null)
             ListTile(leading: const Icon(Icons.swap_horiz), title: const Text('Đổi vai trò thiết bị'), onTap: widget.onChangeRole),
           ListTile(

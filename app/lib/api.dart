@@ -76,12 +76,20 @@ class Api {
   Future<dynamic> patch(String path, Map<String, dynamic> body) => _send('PATCH', path, body: body);
   Future<dynamic> delete(String path) => _send('DELETE', path);
 
+  /// Tải file nhị phân (báo cáo Excel).
+  Future<Uint8List> getBytes(String path, [Map<String, String>? query]) async =>
+      await _send('GET', path, query: query, raw: true) as Uint8List;
+
   /// Gửi ảnh JPEG (nhận diện biển số).
   Future<dynamic> postJpeg(String path, Uint8List jpg, {Duration timeout = _timeout}) =>
       _send('POST', path, jpeg: jpg, timeout: timeout);
 
   Future<dynamic> _send(String method, String path,
-      {Map<String, dynamic>? body, Map<String, String>? query, Uint8List? jpeg, Duration timeout = _timeout}) async {
+      {Map<String, dynamic>? body,
+      Map<String, String>? query,
+      Uint8List? jpeg,
+      Duration timeout = _timeout,
+      bool raw = false}) async {
     var uri = Uri.parse('$apiUrl$path');
     if (query != null) uri = uri.replace(queryParameters: query);
     final req = http.Request(method, uri);
@@ -105,6 +113,7 @@ class Api {
       throw ApiException('Không kết nối được máy chủ, kiểm tra mạng');
     }
 
+    if (raw && res.statusCode < 400) return res.bodyBytes;
     dynamic data;
     try {
       // JSON luôn là UTF-8; không dùng res.body vì thiếu charset thì http giải mã latin1.
@@ -144,6 +153,13 @@ class Api {
       _saveSession(await post('/auth/login/verify', {'username': username, 'code': code}));
 
   Future<ApiUser> loginWithGoogle(String idToken) async => _saveSession(await post('/auth/google', {'idToken': idToken}));
+
+  /// Sửa hồ sơ của chính mình (PATCH /me) rồi cập nhật phiên đang lưu.
+  Future<ApiUser> updateProfile(Map<String, dynamic> changes) async {
+    final user = await patch('/me', changes) as Map<String, dynamic>;
+    await _prefs?.setString(_userKey, jsonEncode(user));
+    return session.value = ApiUser.fromJson(user);
+  }
 
   Future<void> logout() async {
     _token = null;

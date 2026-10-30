@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../api.dart';
 import '../logic.dart';
@@ -22,6 +23,7 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
   DateTime month = DateTime(DateTime.now().year, DateTime.now().month);
   List<Rec> rows = [];
   bool loading = true;
+  bool exporting = false;
 
   @override
   void initState() {
@@ -32,13 +34,32 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
   Future<void> _load() async {
     setState(() => loading = true);
     try {
-      final m = '${month.year}-${month.month.toString().padLeft(2, '0')}';
-      final r = await api.get(widget.path, {'month': m}) as Rec;
+      final r = await api.get(widget.path, {'month': _month}) as Rec;
       if (mounted) setState(() => rows = (r['records'] as List).cast<Rec>());
     } catch (e) {
       if (mounted) showError(context, e);
     } finally {
       if (mounted) setState(() => loading = false);
+    }
+  }
+
+  String get _month => '${month.year}-${month.month.toString().padLeft(2, '0')}';
+
+  /// Báo cáo tháng (doanh thu, lượt gửi, bảng công) do API tạo file .xlsx, chia sẻ qua Zalo / Gmail / Drive...
+  Future<void> _export() async {
+    setState(() => exporting = true);
+    try {
+      final bytes = await api.getBytes('/reports/monthly.xlsx', {'month': _month});
+      const mime = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+      await SharePlus.instance.share(ShareParams(
+        files: [XFile.fromData(bytes, mimeType: mime)],
+        fileNameOverrides: ['bao-cao-bai-giu-xe-$_month.xlsx'],
+        subject: 'Báo cáo bãi giữ xe tháng ${month.month}/${month.year}',
+      ));
+    } catch (e) {
+      if (mounted) showError(context, e);
+    } finally {
+      if (mounted) setState(() => exporting = false);
     }
   }
 
@@ -57,7 +78,17 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
       byGuard.putIfAbsent(r['guard_name'] as String? ?? '#${r['guard_id']}', () => []).add((r, attStat(r)));
     }
     return Scaffold(
-      appBar: widget.embedded ? null : AppBar(title: const Text('Bảng công')),
+      appBar: widget.embedded
+          ? null
+          : AppBar(title: const Text('Bảng công'), actions: [
+              IconButton(
+                onPressed: exporting ? null : _export,
+                tooltip: 'Xuất báo cáo tháng ra Excel',
+                icon: exporting
+                    ? const SizedBox.square(dimension: 20, child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Icon(Icons.file_download_outlined),
+              ),
+            ]),
       body: RefreshIndicator(
         onRefresh: _load,
         child: ListView(padding: const EdgeInsets.all(16), children: [
