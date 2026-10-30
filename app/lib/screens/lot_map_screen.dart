@@ -7,10 +7,12 @@ import '../logic.dart';
 import '../lot.dart';
 import '../main.dart';
 import 'dashboard_screen.dart' show hhmm;
+import 'layout_editor_screen.dart';
 
 const _refreshEvery = Duration(seconds: 10);
 
-/// Sơ đồ bãi cho quản lý: xem ô trống / ô cư dân / ô có xe, thêm / sửa / xoá khu, gán ô cho cư dân, khoá ô.
+/// Sơ đồ bãi cho quản lý: mặt bằng thật (cổng, đường, khu), trạng thái từng ô, đường từ cổng tới ô,
+/// gán ô cho cư dân, khoá ô, sửa mặt bằng.
 class LotMapScreen extends StatefulWidget {
   const LotMapScreen({super.key});
 
@@ -20,6 +22,7 @@ class LotMapScreen extends StatefulWidget {
 
 class _LotMapScreenState extends State<LotMapScreen> {
   Rec? map;
+  Rec? route; // đường tới ô đang chọn (GET /lot/route)
   Timer? timer;
 
   @override
@@ -55,84 +58,13 @@ class _LotMapScreenState extends State<LotMapScreen> {
     }
   }
 
-  Future<void> _editZone([Rec? z]) async {
-    final types = await vehicleTypes();
-    if (!mounted) return;
-    final name = TextEditingController(text: z?['name'] as String?);
-    final rows = TextEditingController(text: '${z?['rows'] ?? 2}');
-    final cols = TextEditingController(text: '${z?['cols'] ?? 5}');
-    final order = TextEditingController(text: '${z?['order'] ?? ((map?['zones'] as List?)?.length ?? 0) + 1}');
-    var type = z?['vehicle_type'] as String? ?? 'motorbike';
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (c) => StatefulBuilder(
-        builder: (c, setD) => AlertDialog(
-          title: Text(z == null ? 'Thêm khu' : 'Sửa khu ${z['name']}'),
-          content: SingleChildScrollView(
-            child: Column(mainAxisSize: MainAxisSize.min, children: [
-              TextField(
-                controller: name,
-                textCapitalization: TextCapitalization.characters,
-                decoration: const InputDecoration(labelText: 'Tên khu (VD: A, B1)', prefixIcon: Icon(Icons.grid_view)),
-              ),
-              fieldGap,
-              DropdownButtonFormField<String>(
-                initialValue: type,
-                decoration: const InputDecoration(labelText: 'Loại xe', prefixIcon: Icon(Icons.commute)),
-                items: [for (final t in types) DropdownMenuItem(value: t['code'] as String, child: Text(t['name'] as String))],
-                onChanged: (v) => setD(() => type = v!),
-              ),
-              fieldGap,
-              Row(children: [
-                Expanded(child: TextField(controller: rows, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Số hàng'))),
-                const SizedBox(width: 12),
-                Expanded(child: TextField(controller: cols, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Số ô mỗi hàng'))),
-              ]),
-              fieldGap,
-              TextField(
-                controller: order,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(
-                    labelText: 'Thứ tự gần cổng', helperText: '1 = gần cổng nhất, khách được chỉ vào khu này trước'),
-              ),
-            ]),
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Huỷ')),
-            FilledButton(onPressed: () => Navigator.pop(c, true), child: const Text('Lưu')),
-          ],
-        ),
-      ),
-    );
-    if (ok != true) return;
-    final body = {
-      'name': name.text.trim().toUpperCase(),
-      'vehicleType': type,
-      'rows': int.tryParse(rows.text.trim()),
-      'cols': int.tryParse(cols.text.trim()),
-      'order': int.tryParse(order.text.trim()) ?? 0,
-    };
-    await _run(() => z == null ? api.post('/zones', body) : api.put('/zones/${z['id']}', body),
-        z == null ? 'Đã thêm khu, các ô được tạo tự động' : 'Đã lưu khu');
-  }
-
-  Future<void> _zoneMenu(Rec z) async {
-    final action = await showModalBottomSheet<String>(
-      context: context,
-      builder: (c) => SafeArea(
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
-          ListTile(leading: const Icon(Icons.edit_outlined), title: Text('Sửa khu ${z['name']}'), onTap: () => Navigator.pop(c, 'edit')),
-          ListTile(
-            leading: Icon(Icons.delete_outline, color: Theme.of(c).colorScheme.error),
-            title: Text('Xoá khu ${z['name']}', style: TextStyle(color: Theme.of(c).colorScheme.error)),
-            subtitle: const Text('Chỉ xoá được khi không có xe và không có ô cư dân'),
-            onTap: () => Navigator.pop(c, 'delete'),
-          ),
-        ]),
-      ),
-    );
-    if (action == 'edit') return _editZone(z);
-    if (action == 'delete') await _run(() => api.delete('/zones/${z['id']}'), 'Đã xoá khu ${z['name']}');
+  Future<void> _showRoute(Rec sl) async {
+    try {
+      final r = await api.get('/lot/route', {'slot': sl['code'] as String}) as Rec;
+      if (mounted) setState(() => route = r);
+    } catch (e) {
+      if (mounted) showError(context, e);
+    }
   }
 
   Future<void> _assign(Rec slot) async {
@@ -173,7 +105,8 @@ class _LotMapScreenState extends State<LotMapScreen> {
         child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
           ListTile(
             leading: CircleAvatar(backgroundColor: slotColor(s, state), child: Icon(vehicleIcon(sl['vehicle_type'] as String?), color: s.surface)),
-            title: Text('Ô ${sl['code']} · ${slotStateNames[state]}', style: const TextStyle(fontWeight: FontWeight.w600)),
+            title: Text('Ô ${sl['code']} · ${vehicleName(sl['vehicle_type'] as String?)} · ${slotStateNames[state]}',
+                style: const TextStyle(fontWeight: FontWeight.w600)),
             subtitle: Text([
               if (sl['plate'] != null) 'Xe ${sl['plate']} vào ${hhmm(sl['since'] as String?)}',
               if (sl['card_uid'] != null) 'Cư dân ${sl['owner'] ?? ''} · căn ${sl['apartment'] ?? '?'} · biển ${sl['resident_plate'] ?? '?'}',
@@ -182,6 +115,7 @@ class _LotMapScreenState extends State<LotMapScreen> {
             isThreeLine: true,
           ),
           const Divider(),
+          ListTile(leading: const Icon(Icons.route), title: const Text('Xem đường từ cổng vào tới ô'), onTap: () => Navigator.pop(c, 'route')),
           ListTile(leading: const Icon(Icons.person_add_alt), title: const Text('Gán cho cư dân (thẻ tháng)'), onTap: () => Navigator.pop(c, 'assign')),
           if (sl['card_uid'] != null)
             ListTile(leading: const Icon(Icons.person_remove_outlined), title: const Text('Bỏ gán, trả ô cho khách vãng lai'), onTap: () => Navigator.pop(c, 'free')),
@@ -194,6 +128,8 @@ class _LotMapScreenState extends State<LotMapScreen> {
       ),
     );
     switch (action) {
+      case 'route':
+        await _showRoute(sl);
       case 'assign':
         await _assign(sl);
       case 'free':
@@ -203,35 +139,65 @@ class _LotMapScreenState extends State<LotMapScreen> {
     }
   }
 
+  Future<void> _edit() async {
+    final m = map;
+    if (m == null) return;
+    final saved = await Navigator.push<bool>(context, MaterialPageRoute(builder: (_) => LayoutEditorScreen(map: m)));
+    if (saved == true) {
+      setState(() => route = null);
+      _reload();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final t = Theme.of(context).textTheme;
+    final s = Theme.of(context).colorScheme;
     final m = map;
-    return Scaffold(
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _editZone(),
-        icon: const Icon(Icons.add),
-        label: const Text('Thêm khu'),
-      ),
-      body: RefreshIndicator(
-        onRefresh: _reload,
-        child: ListView(padding: const EdgeInsets.fromLTRB(16, 16, 16, 96), children: [
-          Text('Sơ đồ bãi', style: t.titleLarge?.copyWith(fontWeight: FontWeight.bold)),
-          Text('Chạm ô để gán cho cư dân / khoá ô, chạm tên khu để sửa. Khách vãng lai được API chỉ vào ô xanh gần cổng nhất.',
-              style: t.bodySmall),
-          const SizedBox(height: 12),
-          if (m == null) const Center(child: Padding(padding: EdgeInsets.all(32), child: CircularProgressIndicator())) else ...[
-            _TypeSummary(m),
-            const SizedBox(height: 12),
-            LotMapView(m, onSlot: _slotSheet, onZone: _zoneMenu),
-          ],
+    final r = route;
+    return RefreshIndicator(
+      onRefresh: _reload,
+      child: ListView(padding: const EdgeInsets.all(16), children: [
+        Row(children: [
+          Expanded(child: Text('Sơ đồ bãi', style: t.titleLarge?.copyWith(fontWeight: FontWeight.bold))),
+          FilledButton.tonalIcon(onPressed: _edit, icon: const Icon(Icons.edit_outlined), label: const Text('Sửa mặt bằng')),
         ]),
-      ),
+        Text('Chạm ô để xem đường từ cổng, gán cho cư dân hoặc khoá ô. Khách vãng lai được API chỉ ô trống gần cổng vào nhất '
+            'theo quãng đường xe chạy. Dùng 2 ngón tay để phóng to.', style: t.bodySmall),
+        const SizedBox(height: 12),
+        if (m == null)
+          const Center(child: Padding(padding: EdgeInsets.all(32), child: CircularProgressIndicator()))
+        else ...[
+          _TypeSummary(m),
+          const SizedBox(height: 12),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(12),
+            child: LotPlanView(m,
+                onSlot: _slotSheet,
+                route: cellsFrom(r?['path']),
+                exitRoute: cellsFrom(r?['exitPath']),
+                highlight: r?['slot'] as String?),
+          ),
+          const SizedBox(height: 8),
+          LotLegend(withRoute: r != null),
+          if (r != null)
+            Card(
+              color: s.primaryContainer,
+              margin: const EdgeInsets.only(top: 12),
+              child: ListTile(
+                leading: Icon(Icons.route, color: s.onPrimaryContainer),
+                title: Text('Đường tới ô ${r['slot']} (${r['distance']} ô)', style: TextStyle(color: s.onPrimaryContainer, fontWeight: FontWeight.w600)),
+                subtitle: Text(r['hint'] as String, style: TextStyle(color: s.onPrimaryContainer)),
+                trailing: IconButton(icon: const Icon(Icons.close), onPressed: () => setState(() => route = null)),
+              ),
+            ),
+        ],
+      ]),
     );
   }
 }
 
-/// Mỗi loại xe: còn trống bao nhiêu ô / tổng, bao nhiêu ô dành cho khách.
+/// Mỗi loại xe: bao nhiêu ô khách còn trống / tổng số ô.
 class _TypeSummary extends StatelessWidget {
   const _TypeSummary(this.map);
 
@@ -240,13 +206,13 @@ class _TypeSummary extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final s = Theme.of(context).colorScheme;
-    final by = <String, ({int total, int free, int visitor})>{};
+    final by = <String, ({int total, int visitor})>{};
     for (final z in (map['zones'] as List).cast<Rec>()) {
       final code = z['vehicle_type'] as String;
-      var x = by[code] ?? (total: 0, free: 0, visitor: 0);
+      var x = by[code] ?? (total: 0, visitor: 0);
       for (final sl in (z['slots'] as List).cast<Rec>()) {
         if (sl['state'] == 'off') continue;
-        x = (total: x.total + 1, free: x.free + (sl['state'] != 'parked' ? 1 : 0), visitor: x.visitor + (sl['state'] == 'free' ? 1 : 0));
+        x = (total: x.total + 1, visitor: x.visitor + (sl['state'] == 'free' ? 1 : 0));
       }
       by[code] = x;
     }
@@ -254,7 +220,7 @@ class _TypeSummary extends StatelessWidget {
       for (final e in by.entries)
         Chip(
           avatar: Icon(vehicleIcon(e.key), size: 18, color: s.primary),
-          label: Text('${vehicleName(e.key)}: ${e.value.visitor} ô khách trống · ${e.value.total} ô'),
+          label: Text('${vehicleName(e.key)}: ${e.value.visitor} ô khách trống / ${e.value.total}'),
         ),
     ]);
   }

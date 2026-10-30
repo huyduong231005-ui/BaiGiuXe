@@ -7,6 +7,7 @@ import 'package:wakelock_plus/wakelock_plus.dart';
 import '../api.dart';
 import '../esp_link.dart';
 import '../gate_station.dart';
+import '../lot.dart';
 import '../main.dart' show ManagerHome, prefs;
 
 /// Render free ngủ sau 15 phút không có request; ping định kỳ để lượt quẹt thẻ không phải chờ API thức dậy.
@@ -160,6 +161,37 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                           ),
                         ],
                       ),
+                    ),
+                  ),
+                ),
+                // Chỉ đường cho xe vừa vào: mặt bằng + đường từ cổng tới ô, chữ to để tài xế / bảo vệ đọc.
+                Align(
+                  alignment: Alignment.topCenter,
+                  child: Padding(
+                    padding: const EdgeInsets.only(top: 44),
+                    child: ValueListenableBuilder(
+                      valueListenable: station!.guide,
+                      builder: (_, g, _) => g == null
+                          ? const SizedBox.shrink()
+                          : Card(
+                              margin: const EdgeInsets.symmetric(horizontal: 8),
+                              color: Colors.black.withValues(alpha: 0.82),
+                              child: Padding(
+                                padding: const EdgeInsets.all(10),
+                                child: Column(mainAxisSize: MainAxisSize.min, children: [
+                                  Text('Mời vào ô ${g.route['slot']}',
+                                      style: const TextStyle(color: Colors.yellowAccent, fontSize: 26, fontWeight: FontWeight.bold)),
+                                  Text(g.route['hint'] as String, textAlign: TextAlign.center,
+                                      style: const TextStyle(color: Colors.white, fontSize: 15)),
+                                  const SizedBox(height: 8),
+                                  LotPlanView(g.map,
+                                      route: cellsFrom(g.route['path']),
+                                      highlight: g.route['slot'] as String?,
+                                      zoomable: false,
+                                      maxHeight: MediaQuery.of(context).size.height * 0.28),
+                                ]),
+                              ),
+                            ),
                     ),
                   ),
                 ),

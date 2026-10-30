@@ -46,17 +46,37 @@ Future<void> shareCarLocation(BuildContext context, Rec card) async {
   }
 }
 
-/// Sơ đồ bãi (không lộ biển số người khác), tô đậm ô của tôi.
+/// Mặt bằng bãi (không lộ biển số người khác) với đường từ cổng vào tới ô của tôi và lời chỉ dẫn.
 void showMySlot(BuildContext context, String slot) => Navigator.push(
       context,
       MaterialPageRoute(
         builder: (_) => Scaffold(
-          appBar: AppBar(title: Text('Ô $slot trên sơ đồ bãi')),
+          appBar: AppBar(title: Text('Đường tới ô $slot')),
           body: FutureBuilder(
-            future: Future.wait([vehicleTypes(), api.get('/lot/map/public')]),
-            builder: (c, snap) => snap.hasData
-                ? ListView(padding: const EdgeInsets.all(16), children: [LotMapView(snap.data![1] as Rec, highlight: slot)])
-                : Center(child: snap.hasError ? Text('${snap.error}') : const CircularProgressIndicator()),
+            future: Future.wait([vehicleTypes(), api.get('/lot/map/public'), api.get('/lot/route', {'slot': slot})]),
+            builder: (c, snap) {
+              if (!snap.hasData) return Center(child: snap.hasError ? Text('${snap.error}') : const CircularProgressIndicator());
+              final r = snap.data![2] as Rec;
+              final s = Theme.of(c).colorScheme;
+              return ListView(padding: const EdgeInsets.all(16), children: [
+                Card(
+                  color: s.primaryContainer,
+                  child: ListTile(
+                    leading: Icon(Icons.route, color: s.onPrimaryContainer),
+                    title: Text('Ô $slot', style: TextStyle(color: s.onPrimaryContainer, fontWeight: FontWeight.bold)),
+                    subtitle: Text(r['hint'] as String, style: TextStyle(color: s.onPrimaryContainer)),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
+                  child: LotPlanView(snap.data![1] as Rec,
+                      route: cellsFrom(r['path']), exitRoute: cellsFrom(r['exitPath']), highlight: slot),
+                ),
+                const SizedBox(height: 8),
+                const LotLegend(withRoute: true),
+              ]);
+            },
           ),
         ),
       ),

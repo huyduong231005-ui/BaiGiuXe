@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import 'api.dart';
@@ -45,114 +47,266 @@ Color slotColor(ColorScheme s, String state) => switch (state) {
 
 const slotStateNames = {'free': 'Trống', 'resident': 'Ô cư dân', 'parked': 'Có xe', 'off': 'Tạm khoá'};
 
-/// Sơ đồ bãi: mỗi khu là một lưới ô, tô màu theo trạng thái. [highlight] = ô cần chỉ (ô của cư dân / ô vừa chỉ cho khách).
-class LotMapView extends StatelessWidget {
-  const LotMapView(this.map, {super.key, this.highlight, this.onSlot, this.onZone, this.compact = false});
+typedef Cell = (int, int);
+
+/// Đường đi từ API ([[hàng, cột], ...]) -> danh sách ô.
+List<Cell> cellsFrom(Object? path) => [for (final p in (path as List? ?? const [])) ((p as List)[0] as int, p[1] as int)];
+
+/// Mặt bằng bãi vẽ như thật: tường, đường nhựa có vạch giữa làn, cổng VÀO / RA, vạch kẻ ô đậu tô màu theo trạng thái,
+/// tên khu, và đường dẫn từ cổng tới ô (route) + từ ô ra cổng (exitRoute). Phóng to / kéo bằng 2 ngón tay.
+class LotPlanView extends StatelessWidget {
+  const LotPlanView(this.map,
+      {super.key, this.route = const [], this.exitRoute = const [], this.highlight, this.onSlot, this.zoomable = true, this.maxHeight});
 
   final Rec map; // GET /lot/map hoặc /lot/map/public
+  final List<Cell> route, exitRoute;
   final String? highlight;
   final void Function(Rec slot)? onSlot;
-  final void Function(Rec zone)? onZone;
-  final bool compact; // màn camera cổng: ô nhỏ, không chú thích
+  final bool zoomable;
+  final double? maxHeight;
+
+  @override
+  Widget build(BuildContext context) {
+    final layout = (map['layout'] as List? ?? const []).cast<String>();
+    if (layout.isEmpty) {
+      return const Padding(padding: EdgeInsets.all(24), child: Text('Chưa vẽ mặt bằng bãi', textAlign: TextAlign.center));
+    }
+    final slots = <String, Rec>{};
+    final zoneType = <String, String>{};
+    for (final z in (map['zones'] as List).cast<Rec>()) {
+      zoneType[z['name'] as String] = z['vehicle_type'] as String;
+      for (final s in (z['slots'] as List).cast<Rec>()) {
+        slots['${s['row']},${s['col']}'] = s;
+      }
+    }
+    return LayoutBuilder(builder: (context, box) {
+      final cols = layout[0].length, rows = layout.length;
+      var cell = box.maxWidth / cols;
+      if (maxHeight != null && cell * rows > maxHeight!) cell = maxHeight! / rows;
+      final size = Size(cell * cols, cell * rows);
+      final paint = CustomPaint(
+        size: size,
+        painter: LotPainter(
+          layout: layout,
+          slots: slots,
+          zoneType: zoneType,
+          route: route,
+          exitRoute: exitRoute,
+          highlight: highlight,
+          scheme: Theme.of(context).colorScheme,
+        ),
+      );
+      final tappable = GestureDetector(
+        onTapUp: onSlot == null
+            ? null
+            : (d) {
+                final s = slots['${(d.localPosition.dy / cell).floor()},${(d.localPosition.dx / cell).floor()}'];
+                if (s != null) onSlot!(s);
+              },
+        child: paint,
+      );
+      return Center(
+        child: SizedBox.fromSize(
+          size: size,
+          child: zoomable ? InteractiveViewer(maxScale: 6, child: tappable) : tappable,
+        ),
+      );
+    });
+  }
+}
+
+class LotPainter extends CustomPainter {
+  LotPainter({
+    required this.layout,
+    required this.slots,
+    required this.zoneType,
+    required this.scheme,
+    this.route = const [],
+    this.exitRoute = const [],
+    this.highlight,
+    this.grid = false,
+  });
+
+  final List<String> layout;
+  final Map<String, Rec> slots; // "hàng,cột" -> ô (mã, trạng thái)
+  final Map<String, String> zoneType; // chữ khu -> loại xe
+  final ColorScheme scheme;
+  final List<Cell> route, exitRoute;
+  final String? highlight;
+  final bool grid; // màn sửa mặt bằng: kẻ lưới mờ
+
+  static const asphalt = Color(0xFF4A4F57), wall = Color(0xFF26292E), green = Color(0xFF33372F); // green: chỗ trống / cột
+
+  String at(int r, int c) => r < 0 || r >= layout.length || c < 0 || c >= layout[0].length ? '#' : layout[r][c];
+  bool road(int r, int c) => const {'=', 'I', 'O'}.contains(at(r, c));
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final cell = size.width / layout[0].length;
+    Rect rect(int r, int c) => Rect.fromLTWH(c * cell, r * cell, cell, cell);
+    Offset center((int, int) p) => Offset((p.$2 + 0.5) * cell, (p.$1 + 0.5) * cell);
+    final fill = Paint();
+
+    // Nền: tường, chỗ trống (cột / bồn cây), đường nhựa, cổng
+    for (var r = 0; r < layout.length; r++) {
+      for (var c = 0; c < layout[0].length; c++) {
+        final ch = layout[r][c];
+        fill.color = switch (ch) {
+          '#' => wall,
+          '.' => green,
+          'I' => Colors.green.shade700,
+          'O' => Colors.red.shade700,
+          _ => asphalt,
+        };
+        canvas.drawRect(rect(r, c), fill);
+      }
+    }
+    // Vạch giữa làn: nét đứt trắng trên đoạn đường thẳng
+    final lane = Paint()
+      ..color = Colors.white.withValues(alpha: 0.55)
+      ..strokeWidth = math.max(1, cell * 0.06);
+    for (var r = 0; r < layout.length; r++) {
+      for (var c = 0; c < layout[0].length; c++) {
+        if (at(r, c) != '=') continue;
+        final m = center((r, c));
+        if (road(r, c - 1) && road(r, c + 1) && !road(r - 1, c)) {
+          canvas.drawLine(m - Offset(cell * 0.2, 0), m + Offset(cell * 0.2, 0), lane);
+        } else if (road(r - 1, c) && road(r + 1, c) && !road(r, c - 1)) {
+          canvas.drawLine(m - Offset(0, cell * 0.2), m + Offset(0, cell * 0.2), lane);
+        }
+      }
+    }
+    // Ô đậu: tô theo trạng thái, vạch trắng ngăn ô, số ô
+    final lines = Paint()
+      ..color = Colors.white.withValues(alpha: 0.85)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = math.max(1, cell * 0.05);
+    for (var r = 0; r < layout.length; r++) {
+      for (var c = 0; c < layout[0].length; c++) {
+        final ch = layout[r][c];
+        if (!RegExp('[A-Z]').hasMatch(ch) || ch == 'I' || ch == 'O') continue;
+        final s = slots['$r,$c'];
+        final box = rect(r, c).deflate(cell * 0.06);
+        fill.color = slotColor(scheme, s?['state'] as String? ?? 'free').withValues(alpha: 0.85);
+        canvas.drawRRect(RRect.fromRectAndRadius(box, Radius.circular(cell * 0.12)), fill);
+        canvas.drawRRect(RRect.fromRectAndRadius(box, Radius.circular(cell * 0.12)), lines);
+        final label = s == null ? ch : (s['code'] as String).split('-').last;
+        if (cell >= 12) _text(canvas, label, box.center, cell * 0.42, Colors.white, bold: true);
+      }
+    }
+    // Tên khu: chữ lớn mờ ở giữa khu, kèm loại xe
+    final bounds = <String, Rect>{};
+    for (var r = 0; r < layout.length; r++) {
+      for (var c = 0; c < layout[0].length; c++) {
+        final ch = layout[r][c];
+        if (!zoneType.containsKey(ch)) continue;
+        bounds[ch] = bounds[ch]?.expandToInclude(rect(r, c)) ?? rect(r, c);
+      }
+    }
+    for (final e in bounds.entries) {
+      final b = e.value;
+      _text(canvas, 'Khu ${e.key}', Offset(b.left + cell * 0.2, b.top - cell * 0.32), cell * 0.5,
+          Colors.white.withValues(alpha: 0.9), bold: true, alignLeft: true);
+    }
+    // Cổng
+    for (final (ch, label) in [('I', 'VÀO'), ('O', 'RA')]) {
+      for (var r = 0; r < layout.length; r++) {
+        for (var c = 0; c < layout[0].length; c++) {
+          if (layout[r][c] == ch) _text(canvas, label, rect(r, c).center, cell * 0.38, Colors.white, bold: true);
+        }
+      }
+    }
+    if (grid) {
+      final g = Paint()
+        ..color = Colors.white.withValues(alpha: 0.12)
+        ..strokeWidth = 1;
+      for (var r = 0; r <= layout.length; r++) {
+        canvas.drawLine(Offset(0, r * cell), Offset(size.width, r * cell), g);
+      }
+      for (var c = 0; c <= layout[0].length; c++) {
+        canvas.drawLine(Offset(c * cell, 0), Offset(c * cell, size.height), g);
+      }
+    }
+    // Đường ra (nét đứt cam) rồi đường vào (xanh đậm, mũi tên ở ô cần đỗ)
+    _path(canvas, exitRoute, center, cell, Colors.orange.shade400, dashed: true);
+    _path(canvas, route, center, cell, Colors.lightBlueAccent);
+    // Ô cần chỉ: viền dày nhấp nháy tĩnh
+    for (final e in slots.entries) {
+      if (e.value['code'] != highlight) continue;
+      final p = e.key.split(',').map(int.parse).toList();
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(rect(p[0], p[1]).inflate(cell * 0.08), Radius.circular(cell * 0.2)),
+        Paint()
+          ..color = Colors.yellowAccent
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = math.max(2, cell * 0.14),
+      );
+    }
+  }
+
+  void _path(Canvas canvas, List<Cell> cells, Offset Function((int, int)) center, double cell, Color color, {bool dashed = false}) {
+    if (cells.length < 2) return;
+    final pts = [for (final p in cells) center(p)];
+    final stroke = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round
+      ..strokeWidth = math.max(3, cell * (dashed ? 0.16 : 0.26));
+    if (dashed) {
+      for (var i = 1; i < pts.length; i++) {
+        if (i.isOdd) canvas.drawLine(pts[i - 1], pts[i], stroke);
+      }
+    } else {
+      canvas.drawPath(Path()..addPolygon(pts, false), stroke);
+    }
+    // Mũi tên ở cuối
+    final a = pts[pts.length - 2], b = pts.last;
+    final ang = math.atan2(b.dy - a.dy, b.dx - a.dx);
+    final len = cell * 0.55;
+    final head = Path()
+      ..moveTo(b.dx, b.dy)
+      ..lineTo(b.dx - len * math.cos(ang - 0.5), b.dy - len * math.sin(ang - 0.5))
+      ..lineTo(b.dx - len * math.cos(ang + 0.5), b.dy - len * math.sin(ang + 0.5))
+      ..close();
+    canvas.drawPath(head, Paint()..color = color);
+  }
+
+  void _text(Canvas canvas, String s, Offset at, double size, Color color, {bool bold = false, bool alignLeft = false}) {
+    final tp = TextPainter(
+      text: TextSpan(text: s, style: TextStyle(color: color, fontSize: size, fontWeight: bold ? FontWeight.bold : null)),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    tp.paint(canvas, alignLeft ? at - Offset(0, tp.height / 2) : at - Offset(tp.width / 2, tp.height / 2));
+  }
+
+  @override
+  bool shouldRepaint(LotPainter old) =>
+      old.layout != layout || old.slots != slots || old.route != route || old.exitRoute != exitRoute ||
+      old.highlight != highlight || old.scheme != scheme || old.grid != grid;
+}
+
+/// Chú thích màu dưới mặt bằng.
+class LotLegend extends StatelessWidget {
+  const LotLegend({super.key, this.withRoute = false});
+
+  final bool withRoute;
 
   @override
   Widget build(BuildContext context) {
     final s = Theme.of(context).colorScheme;
     final t = Theme.of(context).textTheme;
-    final zones = (map['zones'] as List).cast<Rec>();
-    if (zones.isEmpty) {
-      return const Padding(padding: EdgeInsets.all(24), child: Text('Chưa vẽ sơ đồ bãi', textAlign: TextAlign.center));
-    }
-    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-      if (!compact)
-        Padding(
-          padding: const EdgeInsets.only(bottom: 8),
-          child: Wrap(spacing: 12, runSpacing: 4, children: [
-            for (final e in slotStateNames.entries)
-              Row(mainAxisSize: MainAxisSize.min, children: [
-                Container(width: 12, height: 12, decoration: BoxDecoration(color: slotColor(s, e.key), borderRadius: BorderRadius.circular(3))),
-                const SizedBox(width: 4),
-                Text(e.value, style: t.labelSmall),
-              ]),
-          ]),
-        ),
-      for (final z in zones) ...[
-        InkWell(
-          onTap: onZone == null ? null : () => onZone!(z),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 6),
-            child: Row(children: [
-              Icon(vehicleIcon(z['vehicle_type'] as String?), size: 18),
-              const SizedBox(width: 6),
-              Text('Khu ${z['name']} · ${vehicleName(z['vehicle_type'] as String?)}', style: t.titleSmall),
-              const Spacer(),
-              Text('${(z['slots'] as List).where((x) => x['state'] == 'free').length} trống', style: t.labelMedium),
-              if (onZone != null) const Icon(Icons.more_vert, size: 18),
-            ]),
-          ),
-        ),
-        _ZoneGrid(z, highlight: highlight, onSlot: onSlot, compact: compact),
-        const SizedBox(height: 8),
-      ],
-      if (!compact)
-        Row(children: [
-          Icon(Icons.login, size: 16, color: s.onSurfaceVariant),
+    Widget dot(Color c, String label) => Row(mainAxisSize: MainAxisSize.min, children: [
+          Container(width: 12, height: 12, decoration: BoxDecoration(color: c, borderRadius: BorderRadius.circular(3))),
           const SizedBox(width: 4),
-          Text('Cổng vào ở phía trên: khu đầu tiên gần cổng nhất', style: t.labelSmall?.copyWith(color: s.onSurfaceVariant)),
-        ]),
+          Text(label, style: t.labelSmall),
+        ]);
+    return Wrap(spacing: 12, runSpacing: 4, children: [
+      for (final e in slotStateNames.entries) dot(slotColor(s, e.key), e.value),
+      dot(LotPainter.asphalt, 'Đường đi'),
+      dot(Colors.green.shade700, 'Cổng vào'),
+      dot(Colors.red.shade700, 'Cổng ra'),
+      if (withRoute) ...[dot(Colors.lightBlueAccent, 'Đường tới ô'), dot(Colors.orange.shade400, 'Đường ra')],
     ]);
-  }
-}
-
-class _ZoneGrid extends StatelessWidget {
-  const _ZoneGrid(this.zone, {this.highlight, this.onSlot, this.compact = false});
-
-  final Rec zone;
-  final String? highlight;
-  final void Function(Rec slot)? onSlot;
-  final bool compact;
-
-  @override
-  Widget build(BuildContext context) {
-    final s = Theme.of(context).colorScheme;
-    final cols = zone['cols'] as int;
-    final slots = (zone['slots'] as List).cast<Rec>();
-    return GridView.count(
-      crossAxisCount: cols,
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      mainAxisSpacing: 4,
-      crossAxisSpacing: 4,
-      childAspectRatio: compact ? 1.4 : 1.1,
-      children: [
-        for (final sl in slots)
-          () {
-            final hit = sl['code'] == highlight;
-            final c = slotColor(s, sl['state'] as String);
-            return Material(
-              color: c.withValues(alpha: hit ? 1 : 0.18),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(6),
-                side: BorderSide(color: hit ? s.onSurface : c, width: hit ? 3 : 1),
-              ),
-              child: InkWell(
-                borderRadius: BorderRadius.circular(6),
-                onTap: onSlot == null ? null : () => onSlot!(sl),
-                child: Center(
-                  child: FittedBox(
-                    child: Padding(
-                      padding: const EdgeInsets.all(2),
-                      child: Text(
-                        (sl['code'] as String).split('-').last,
-                        style: TextStyle(fontWeight: FontWeight.bold, color: hit ? s.surface : null),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            );
-          }(),
-      ],
-    );
   }
 }

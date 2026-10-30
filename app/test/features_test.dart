@@ -21,21 +21,36 @@ void main() {
     expect(vnd(-25000), '-25.000đ');
   });
 
-  testWidgets('sơ đồ bãi: vẽ đủ ô theo khu, chạm ô gọi lại đúng ô', (tester) async {
+  testWidgets('mặt bằng: vẽ được cổng, đường, ô; chạm vào ô gọi lại đúng ô', (tester) async {
     final map = {
+      'layout': ['#I###O#', '#=====#', '#AA.CC#', '#######'],
       'zones': [
-        {'id': 1, 'name': 'A', 'vehicle_type': 'motorbike', 'rows': 1, 'cols': 3, 'slots': [
-          _slot('A-01', 'resident', 0, 0), _slot('A-02', 'parked', 0, 1), _slot('A-03', 'free', 0, 2),
-        ]},
+        {'id': 1, 'name': 'A', 'vehicle_type': 'motorbike', 'slots': [_slot('A-01', 'resident', 2, 1), _slot('A-02', 'free', 2, 2)]},
+        {'id': 2, 'name': 'C', 'vehicle_type': 'car', 'slots': [_slot('C-01', 'parked', 2, 4), _slot('C-02', 'free', 2, 5)]},
       ],
     };
     String? tapped;
     await tester.pumpWidget(MaterialApp(
-      home: Scaffold(body: SingleChildScrollView(child: LotMapView(map, highlight: 'A-03', onSlot: (s) => tapped = s['code'] as String))),
+      home: Scaffold(
+        body: SizedBox(
+          width: 700,
+          child: LotPlanView(map,
+              zoomable: false,
+              route: cellsFrom([[0, 1], [1, 1], [1, 2], [2, 2]]),
+              highlight: 'A-02',
+              onSlot: (s) => tapped = s['code'] as String),
+        ),
+      ),
     ));
-    expect(find.text('Khu A · Xe máy'), findsOneWidget);
-    expect(find.text('1 trống'), findsOneWidget);
-    await tester.tap(find.text('03'));
-    expect(tapped, 'A-03');
+    expect(find.byType(CustomPaint), findsWidgets);
+    // Ô C-02 ở hàng 2, cột 5: mỗi ô rộng 100px
+    final plan = find.descendant(of: find.byType(LotPlanView), matching: find.byType(GestureDetector));
+    await tester.tapAt(tester.getTopLeft(plan) + const Offset(550, 250));
+    expect(tapped, 'C-02');
+  });
+
+  test('cellsFrom: đường đi từ API thành danh sách ô', () {
+    expect(cellsFrom([[0, 1], [1, 1]]), [(0, 1), (1, 1)]);
+    expect(cellsFrom(null), isEmpty);
   });
 }
