@@ -182,6 +182,9 @@ void mqttLoop() {
 
 void loadWhitelist() {
   wl.clear();
+  // Mở kiểu append để tạo file rỗng nếu chưa có (exists() của LittleFS bản này vẫn in lỗi khi thiếu file).
+  LittleFS.open(WL_FILE, FILE_APPEND).close();
+  LittleFS.open(OFF_FILE, FILE_APPEND).close();
   File f = LittleFS.open(WL_FILE, "r");
   while (f && f.available()) {
     String line = f.readStringUntil('\n');
