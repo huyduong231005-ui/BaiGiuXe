@@ -10,8 +10,12 @@ String? _uri;
 Future<void>? _opening;
 
 /// Kết nối MongoDB (mongodb:// hoặc mongodb+srv:// của Atlas).
+/// safeAtlas=true: mongo_dart xếp hàng các truy vấn chạy song song trên một kết nối, không thì Atlas reset socket
+/// ("connection closed ... reset by peer") khi route gọi nhiều truy vấn cùng lúc bằng .wait.
 Future<void> connect(String uri) async {
-  _uri = uri;
+  final u = Uri.parse(uri);
+  _uri = u.replace(queryParameters: {...u.queryParameters, 'safeAtlas': 'true'}).toString();
+  uri = _uri!;
   db = await Db.create(uri);
   await db.open();
 }
