@@ -295,12 +295,14 @@ class _CardFormState extends State<CardForm> {
     final p = normPlate(plate.text);
     if (!_uidRe.hasMatch(u)) return setState(() => error = 'UID phải là 8-20 ký tự hex (0-9, A-F)');
     if (kind == 'monthly' && p.isEmpty) return setState(() => error = 'Vé tháng cần biển số');
+    // Vé lượt (thẻ khách vãng lai) chỉ có UID: biển số lấy từ ảnh camera lúc xe vào, không gắn chủ xe / căn hộ.
+    final monthly = kind == 'monthly';
     final row = {
       'uid': u,
       'kind': kind,
-      'plate': p.isEmpty ? null : p,
-      'owner': owner.text.trim().isEmpty ? null : owner.text.trim(),
-      'apartment': apartment.text.trim().isEmpty ? null : apartment.text.trim().toUpperCase(),
+      'plate': !monthly || p.isEmpty ? null : p,
+      'owner': !monthly || owner.text.trim().isEmpty ? null : owner.text.trim(),
+      'apartment': !monthly || apartment.text.trim().isEmpty ? null : apartment.text.trim().toUpperCase(),
       'vehicleType': kind == 'monthly' ? vehicleType : null,
       'active': active,
       'validUntil': kind == 'monthly' ? validUntil : null,
@@ -411,28 +413,36 @@ class _CardFormState extends State<CardForm> {
             },
           ),
         ],
-        const SizedBox(height: 20),
-        TextField(
-          controller: plate,
-          textCapitalization: TextCapitalization.characters,
-          decoration: InputDecoration(
-            labelText: kind == 'monthly' ? 'Biển số (bắt buộc)' : 'Biển số (không bắt buộc)',
-            prefixIcon: const Icon(Icons.pin_outlined),
-            helperText: kind == 'monthly' ? 'Vé tháng: xe ra phải đúng biển này' : null,
+        if (kind == 'guest')
+          Padding(
+            padding: const EdgeInsets.only(top: 16),
+            child: Text('Thẻ khách vãng lai chỉ cần UID. Lúc xe vào, camera cổng chụp biển số làm minh chứng; '
+                'lúc ra, biển phải khớp ảnh lúc vào.', style: t.bodySmall),
           ),
-        ),
-        fieldGap,
-        TextField(
-          controller: owner,
-          textCapitalization: TextCapitalization.words,
-          decoration: const InputDecoration(labelText: 'Chủ xe', prefixIcon: Icon(Icons.person_outline)),
-        ),
-        fieldGap,
-        TextField(
-          controller: apartment,
-          textCapitalization: TextCapitalization.characters,
-          decoration: const InputDecoration(labelText: 'Căn hộ (VD: A1-12.05)', prefixIcon: Icon(Icons.apartment)),
-        ),
+        if (kind == 'monthly') ...[
+          const SizedBox(height: 20),
+          TextField(
+            controller: plate,
+            textCapitalization: TextCapitalization.characters,
+            decoration: const InputDecoration(
+              labelText: 'Biển số (bắt buộc)',
+              prefixIcon: Icon(Icons.pin_outlined),
+              helperText: 'Vé tháng: xe vào / ra phải đúng biển này',
+            ),
+          ),
+          fieldGap,
+          TextField(
+            controller: owner,
+            textCapitalization: TextCapitalization.words,
+            decoration: const InputDecoration(labelText: 'Chủ xe', prefixIcon: Icon(Icons.person_outline)),
+          ),
+          fieldGap,
+          TextField(
+            controller: apartment,
+            textCapitalization: TextCapitalization.characters,
+            decoration: const InputDecoration(labelText: 'Căn hộ (VD: A1-12.05)', prefixIcon: Icon(Icons.apartment)),
+          ),
+        ],
         if (widget.card?['slot_code'] != null)
           Padding(
             padding: const EdgeInsets.only(top: 12),
