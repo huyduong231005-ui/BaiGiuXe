@@ -57,6 +57,9 @@ void main() {
     expect(exit(s: session, plate: '30A99999')['message'], 'Sai bien so');
     expect(exit(s: session, plate: '30A99999', candidates: ['59X112345']),
         {'ok': true, 'open': true, 'message': 'Phi: 3000d', 'fee': 3000});
+    // Ra phải đúng y biển: lệch 1 ký tự (lúc vào / tra cứu vẫn chấp nhận) thì từ chối; chỉ khác dấu / cách thì vẫn khớp
+    expect(exit(s: session, plate: '59X112346')['message'], 'Sai bien so');
+    expect(exit(s: session, plate: '59X1-123.45')['ok'], true);
   });
 
   test('attStat + summarize: trễ, về sớm, giờ làm, quên chấm ra', () {

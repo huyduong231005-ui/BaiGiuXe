@@ -124,7 +124,10 @@ Map<String, dynamic> decideExit({
   if (normPlate(plate).isEmpty) return _deny('Khong doc duoc bien');
   final plateIn = session['plate_in'];
   if (plateIn == null || plateIn == '') return _deny('Thieu bien luc vao');
-  final ok = samePlate(plateIn, plate) || candidates.any((c) => samePlate(plateIn, c));
+  // Ra phải đúng y biển lúc vào (không cho lệch 1 ký tự như lúc vào / tra cứu): chặn xe biển gần giống lấy nhầm.
+  // Một trong các cách đọc khác của OCR (candidates) khớp đúng từng ký tự thì vẫn cho ra.
+  final want = normPlate(plateIn);
+  final ok = normPlate(plate) == want || candidates.any((c) => normPlate(c) == want);
   if (!ok) return _deny('Sai bien so');
   final fee = calcFee(session['time_in'], now, settings!, monthlyValid(card, now));
   return {'ok': true, 'open': true, 'message': 'Phi: ${fee}d', 'fee': fee};
