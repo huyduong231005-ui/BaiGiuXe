@@ -59,7 +59,9 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   // Nếu không, camera vẫn đẩy khung hình sau khi engine tách ra -> app crash lúc thoát.
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.inactive && cam != null) {
+    // Chỉ nhả camera + ngắt trạm cổng khi app thật sự xuống nền (paused). "inactive" xảy ra cả khi kéo thanh
+    // thông báo / mở trình chuyển app: ngắt lúc đó làm ESP32 tưởng mất ĐT và tự xử lý offline.
+    if ((state == AppLifecycleState.paused || state == AppLifecycleState.hidden) && cam != null) {
       _release();
       setState(() => cam = null);
     } else if (state == AppLifecycleState.resumed && cam == null && error == null) {
@@ -71,7 +73,8 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     station?.busy.removeListener(_onBusy);
     station?.stop();
     station = null;
-    cam?.dispose();
+    // CameraX đôi khi báo lỗi khi nhả surface lúc đóng: bỏ qua, camera vẫn được giải phóng.
+    cam?.dispose().catchError((Object e) => debugPrint('[camera] dong camera loi: $e'));
     WakelockPlus.disable();
   }
 

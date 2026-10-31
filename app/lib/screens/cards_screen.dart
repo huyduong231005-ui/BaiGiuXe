@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../api.dart';
+import '../esp_link.dart';
 import '../logic.dart';
 import '../lot.dart';
 import '../main.dart';
@@ -217,6 +218,10 @@ class _CardFormState extends State<CardForm> {
   late String? validUntil = widget.card?['valid_until'] as String?; // 'YYYY-MM-DD', null = không giới hạn
   late bool lost = widget.card?['lost_at'] != null;
   Timer? listening;
+  // Nghe quẹt thẻ thẳng từ ESP32 qua MQTT (~0,2s) và bật chế độ nhận thẻ để ĐT camera không xử lý như xe ra vào.
+  EspLink? _mqtt;
+  StreamSubscription<Rec>? _mqttSub;
+  Timer? _enrollTimer;
   Rec? existing; // thẻ vừa quẹt đã có trong hệ thống
   String? error;
   bool saving = false;
@@ -237,6 +242,14 @@ class _CardFormState extends State<CardForm> {
   /// ĐT camera ghi gate_events sau khi xử lý xong lượt quẹt (~2-3s), nên cần ĐT camera đang chạy.
   void _waitScan() {
     final since = DateTime.now().toUtc().toIso8601String();
+    if (mqttConfigured) {
+      _mqtt ??= EspLink('enroll', presence: false)..start();
+      _mqttSub ??= _mqtt!.events.where((e) => e['t'] == 'scan').listen(_onMqttScan);
+      // Gia hạn cờ nhận thẻ mỗi 3s, hạn 10s: app bị tắt ngang thì ĐT camera tự quay lại bình thường sau 10s.
+      void renew() => _mqtt!.setEnroll(DateTime.now().add(const Duration(seconds: 10)));
+      renew();
+      _enrollTimer = Timer.periodic(const Duration(seconds: 3), (_) => renew());
+    }
     setState(() {
       existing = null;
       listening = Timer.periodic(_scanPollEvery, (_) async {
@@ -259,7 +272,20 @@ class _CardFormState extends State<CardForm> {
     } catch (_) {} // không kiểm tra được thì để lúc Lưu báo trùng
   }
 
+  /// Thẻ quẹt ở đầu đọc bất kỳ, nhận thẳng từ ESP32: trả lời ESP32 "đã nhận thẻ" (bíp 1 tiếng) rồi điền UID.
+  Future<void> _onMqttScan(Rec ev) async {
+    if (listening == null) return;
+    final u = ev['uid'] as String;
+    try {
+      await _mqtt!.send({'t': 'res', 'id': ev['id'], 'ok': true, 'open': false, 'l1': 'DA NHAN THE', 'l2': u});
+    } catch (_) {} // ESP32 vừa rớt mạng: vẫn điền UID
+    await _onScanned({'uid': u, 'registered': true}); // registered: tra xem thẻ đã có chưa
+  }
+
   void _stopScan() {
+    _enrollTimer?.cancel();
+    _enrollTimer = null;
+    _mqtt?.setEnroll(null);
     if (listening == null) return;
     listening!.cancel();
     if (mounted) setState(() => listening = null);
@@ -286,6 +312,10 @@ class _CardFormState extends State<CardForm> {
   @override
   void dispose() {
     listening?.cancel();
+    _enrollTimer?.cancel();
+    _mqtt?.setEnroll(null);
+    _mqttSub?.cancel();
+    _mqtt?.stop();
     if (nfcReading) cancelNfc();
     super.dispose();
   }

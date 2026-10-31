@@ -193,6 +193,11 @@ class GateStation {
   Future<void> _handle(Rec ev) async {
     try {
       switch (ev['t']) {
+        // Màn Thêm thẻ đang chờ quẹt: thẻ này để đăng ký, không phải xe ra vào. Không chụp / gọi API; trả lời
+        // ESP32 ngay (màn Thêm thẻ cũng trả lời, ESP32 chỉ nhận bản đầu).
+        case 'scan' when link.enrolling:
+          last.value = 'Che do them the: nhan the ${ev['uid']}, khong tinh luot ra vao';
+          await _esp({'t': 'res', 'id': ev['id'], 'ok': true, 'open': false, 'l1': 'DA NHAN THE', 'l2': ev['uid']});
         case 'scan':
           await _scanGuarded(ev);
         case 'auth':
@@ -208,6 +213,7 @@ class GateStation {
       }
     } catch (e) {
       last.value = 'Loi (${ev['t']}): $e';
+      debugPrint('[gate] loi xu ly ${ev['t']} cong ${ev['g']}: $e'); // adb logcat -s flutter
     }
   }
 
@@ -217,6 +223,7 @@ class GateStation {
       await _scan(ev);
     } catch (e) {
       last.value = 'Loi: $e';
+      debugPrint('[gate ${ev['g']}] loi the ${ev['uid']}: $e'); // adb logcat -s flutter
       _addHistory(ev['g'] as String, null, false, 'Loi he thong');
       if (ev['id'] != 0) {
         await _esp({'t': 'res', 'id': ev['id'], 'ok': false, 'open': false, 'l1': 'TU CHOI', 'l2': 'Loi he thong'});
