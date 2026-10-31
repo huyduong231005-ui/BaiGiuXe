@@ -36,7 +36,7 @@ Luồng bảo vệ (bàn phím + vân tay):
 | Linh kiện | Giao tiếp | Chân ESP32 | Vai trò |
 |---|---|---|---|
 | ESP32 DevKit V1 | — | — | Bộ điều khiển trung tâm, có WiFi |
-| 2 × RC522 (RFID 13,56 MHz) | SPI (VSPI và HSPI) | Vào: SS 5, SCK 18, MOSI 23, MISO 36, RST 4 · Ra: SS 27, SCK 14, MOSI 32, MISO 35, RST 33 | Đọc thẻ ở cổng vào và cổng ra |
+| 2 × RC522 (RFID 13,56 MHz) | SPI (vào: HSPI, ra: VSPI) | Vào: SS 5, SCK 18, MOSI 26, MISO 36, RST 4 · Ra: SS 27, SCK 14, MOSI 32, MISO 35, RST 33 | Đọc thẻ ở cổng vào và cổng ra; mỗi lần quẹt ghi mã xoay vòng mới vào sector 1 của thẻ để phát hiện thẻ sao chép |
 | Bàn phím 4×4 qua PCF8574 | I2C (địa chỉ 0x20) | SDA 21, SCL 22 | A mở cổng, B đăng ký vân tay, C chấm công, nhập PIN |
 | OLED SSD1306 0,96" 128×64, 2 màu | I2C (0x3C) | SDA 21, SCL 22 | Hiện giờ, trạng thái, biển số, lý do |
 | DS3231 (đồng hồ thời gian thực) | I2C (0x68) | SDA 21, SCL 22 | Giữ giờ khi mất điện, đồng bộ theo điện thoại |

@@ -279,6 +279,11 @@ class _CardFormState extends State<CardForm> {
     try {
       await _mqtt!.send({'t': 'res', 'id': ev['id'], 'ok': true, 'open': false, 'l1': 'DA NHAN THE', 'l2': u});
     } catch (_) {} // ESP32 vừa rớt mạng: vẫn điền UID
+    // ESP32 đã ghi mã xoay vòng mới vào thẻ: thẻ đã có trong hệ thống thì lưu theo, không thì lần quẹt sau báo nhầm
+    // là thẻ chép. Thẻ mới (chưa có) nhận mã ở lần quẹt đầu tại cổng.
+    if (ev['ntok'] != null) {
+      unawaited(api.post('/cards/$u/token', {'tok': ev['tok'], 'ntok': ev['ntok']}).catchError((_) => null));
+    }
     await _onScanned({'uid': u, 'registered': true}); // registered: tra xem thẻ đã có chưa
   }
 
@@ -400,7 +405,7 @@ class _CardFormState extends State<CardForm> {
           controller: uid,
           enabled: isNew,
           textCapitalization: TextCapitalization.characters,
-          decoration: const InputDecoration(labelText: 'UID thẻ', prefixIcon: Icon(Icons.nfc), helperText: 'Tự điền khi quẹt thẻ, hoặc nhập tay'),
+          decoration: const InputDecoration(labelText: 'UID thẻ', prefixIcon: Icon(Icons.nfc)),
           // Sửa tay sang UID khác thì thôi báo "Thẻ này đã có" của thẻ vừa quẹt.
           onChanged: (v) => setState(() {
             if (existing != null && existing!['uid'] != v.trim().toUpperCase()) existing = null;
@@ -446,12 +451,6 @@ class _CardFormState extends State<CardForm> {
             },
           ),
         ],
-        if (kind == 'guest')
-          Padding(
-            padding: const EdgeInsets.only(top: 16),
-            child: Text('Thẻ khách vãng lai chỉ cần UID. Lúc xe vào, camera cổng chụp biển số làm minh chứng; '
-                'lúc ra, biển phải khớp ảnh lúc vào.', style: t.bodySmall),
-          ),
         if (kind == 'monthly') ...[
           const SizedBox(height: 20),
           TextField(
@@ -460,7 +459,6 @@ class _CardFormState extends State<CardForm> {
             decoration: const InputDecoration(
               labelText: 'Biển số (bắt buộc)',
               prefixIcon: Icon(Icons.pin_outlined),
-              helperText: 'Vé tháng: xe vào / ra phải đúng biển này',
             ),
           ),
           fieldGap,
@@ -549,8 +547,6 @@ class _ScanPanel extends StatelessWidget {
           ),
           if (got) Text(uid, style: t.headlineSmall?.copyWith(fontFamily: 'monospace', letterSpacing: 2)),
           if (listening) ...[
-            const SizedBox(height: 4),
-            Text('Cần ĐT camera ở cổng đang mở app', style: t.bodySmall),
             const SizedBox(height: 12),
             const LinearProgressIndicator(),
           ],

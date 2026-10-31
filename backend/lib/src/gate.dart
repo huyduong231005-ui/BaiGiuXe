@@ -83,6 +83,27 @@ Future<Map<String, dynamic>> _leave(String uid, _Read read, DateTime now) async 
       : {'ok': false, 'open': false, 'message': 'Luot gui da dong'};
 }
 
+final _tokRe = RegExp(r'^[0-9A-F]{32}$');
+
+/// Mã xoay vòng chống sao chép thẻ: mỗi lần quẹt, ESP32 đọc mã cũ trong thẻ (sector 1) rồi ghi mã ngẫu nhiên mới,
+/// gửi cả hai. Mã cũ phải khớp mã API đang lưu; lệch = thẻ thật và thẻ chép đã dùng chéo nhau -> khoá thẻ, quản lý
+/// kiểm tra rồi bật lại (thẻ nhận mã mới ở lần quẹt sau). Thẻ chưa có mã (mới cấp / vừa bật lại) thì nhận mã đầu.
+/// Trả lý do từ chối, hoặc null nếu cho qua / không kiểm tra (thẻ không ghi được, quẹt thử, thẻ lạ).
+/// ponytail: lượt quẹt mà ĐT không gửi được lên API sau khi ESP32 đã ghi mã mới làm thẻ thật bị báo nhầm; hiếm,
+/// quản lý bật lại thẻ là xong. Muốn hết hẳn thì đưa tok/ntok vào hàng chờ offline.
+Future<Map<String, dynamic>?> checkRollingToken(String uid, Object? tokRaw, Object? ntokRaw) async {
+  final tok = str(tokRaw).toUpperCase(), ntok = str(ntokRaw).toUpperCase();
+  if (!_tokRe.hasMatch(ntok)) return null;
+  final card = await Card.findOne({'uid': uid});
+  if (card == null) return null;
+  if (card['tok'] != null && card['tok'] != tok) {
+    await Card.updateOne({'uid': uid}, {'active': false, 'tok': null, 'clone_at': DateTime.now()});
+    return {'ok': false, 'open': false, 'message': 'The nghi sao chep'};
+  }
+  await Card.updateOne({'uid': uid}, {'tok': ntok});
+  return null;
+}
+
 const _maxOfflineEvents = 500;
 const _maxWhitelist = 300; // ESP32 lưu trong flash (NVS), ~30 byte mỗi thẻ
 
@@ -139,6 +160,12 @@ Future<bool> _applyOffline(Object? raw) async {
 
 void gateRoutes(Router router) {
   // Một lượt quẹt thẻ: {gate: in|out, uid, plate, score, candidates, img} -> quyết định + 2 dòng OLED + chỗ trống.
+  // Màn Thêm thẻ nhận thẻ thẳng từ ESP32 (không qua /gate/scan) nhưng ESP32 vẫn đã ghi mã mới vào thẻ: lưu theo.
+  router.post('/cards/:uid/token', (req) async {
+    final d = await checkRollingToken(req.params['uid']!.toUpperCase(), req.b('tok'), req.b('ntok'));
+    return json({'ok': d == null, 'message': d?['message']});
+  });
+
   router.post('/gate/scan', (req) async {
     final gate = req.b('gate');
     if (gate != 'in' && gate != 'out') throw HttpError(400, 'gate là in hoặc out');
@@ -146,7 +173,7 @@ void gateRoutes(Router router) {
     if (uid.isEmpty) throw HttpError(400, 'Thiếu UID thẻ');
     final read = _plateRead(req.body);
     final now = DateTime.now();
-    final d = await (gate == 'in' ? _enter : _leave)(uid, read, now);
+    final d = await checkRollingToken(uid, req.b('tok'), req.b('ntok')) ?? await (gate == 'in' ? _enter : _leave)(uid, read, now);
     await GateEvent.insert({'gate': gate, 'kind': 'scan', 'uid': uid, 'status': d['ok'] == true ? 'ok' : 'denied',
       'plate': read.plate, 'img': read.img, 'message': d['message'], 'open': d['open'], 'ocr_ms': _num(req.b('ocrMs')),
       'total_ms': _num(req.b('totalMs')), 'shots': _num(req.b('shots')), 'score': read.plate != null ? read.score : null,

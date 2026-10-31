@@ -131,7 +131,8 @@ Doc? row(Doc? d) {
   final r = Map<String, dynamic>.of(d)
     ..remove('_id')
     ..remove('parked')
-    ..remove('on_duty');
+    ..remove('on_duty')
+    ..remove('tok'); // mã xoay vòng chống sao chép thẻ: chỉ API và thẻ biết
   return d['_id'] is num ? {'id': d['_id'], ...r} : r;
 }
 

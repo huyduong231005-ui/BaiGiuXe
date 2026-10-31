@@ -51,7 +51,7 @@ const uint32_t RESULT_TIMEOUT_MS = 12000;  // ĐT chụp + OCR + DB thường ~3
 const uint32_t PIN_REPLY_TIMEOUT_MS = 8000;
 const uint32_t SAME_CARD_DEBOUNCE_MS = 3000;
 const uint32_t RFID_CHECK_MS = 2000;  // kiểm tra RC522 còn đúng cấu hình (bị reset do sụt áp thì khởi tạo lại)
-const uint32_t MSG_SHOW_MS = 5000;
+const uint32_t MSG_SHOW_MS = 3000;  // kết quả quẹt hiện 3s rồi về "Moi quet the" cho xe kế tiếp
 const uint32_t AUTH_WINDOW_MS = 20000;
 const int PIN_MAX_TRIES = 5;
 const uint32_t PIN_LOCK_MS = 60000;
@@ -63,7 +63,9 @@ const uint32_t OFF_RETRY_MS = 15000;
 // ---- Thiết bị ----
 SPIClass hspi(HSPI);
 MFRC522DriverPinSimple ssIn(RFID_IN_SS), ssOut(RFID_OUT_SS);
-MFRC522DriverSPI drvIn{ssIn, SPI}, drvOut{ssOut, hspi};
+// Cổng vào dùng HSPI, cổng ra dùng VSPI (SPI mặc định): cổng vào trên VSPI đọc được nhưng không ghi được cấu hình
+// (thay dây, đổi chân MOSI, đổi chéo module đều không hết); đổi bộ SPI thì cả 2 cổng ổn. Đo bằng hwtest.
+MFRC522DriverSPI drvIn{ssIn, hspi}, drvOut{ssOut, SPI};
 MFRC522 rfidIn{drvIn}, rfidOut{drvOut};
 I2CKeyPad keypad(PCF8574_ADDR);
 Adafruit_SSD1306 oled(128, 64, &Wire, -1);
@@ -356,7 +358,8 @@ void draw() {
   else if (!phoneConnected()) oled.print(wl.size() ? "Mat DT: the thang OK" : "Cho DT ket noi");
   else if (offCount) oled.printf("Gui bu: %u luot", (unsigned)offCount);
   else if (freeSlots >= 0) oled.printf("Con trong: %d/%d", freeSlots, capacity);
-  bool showing = millis() < msgUntil || authMode;
+  // Đang chờ ĐT trả kết quả thì giữ "Dang xu ly" dù quá MSG_SHOW_MS (chụp + đọc biển có lúc 5-8s).
+  bool showing = millis() < msgUntil || authMode || gIn.pendingId || gOut.pendingId;
   // Vùng xanh (hàng 16-63): dòng chính chữ đậm to, dòng phụ bên dưới.
   printFit(showing ? msg1 : String("Moi quet the"), 42, {&FreeSansBold12pt7b, &FreeSansBold9pt7b, nullptr});
   if (showing && msg2.length()) printFit(msg2, 61, {&FreeSans9pt7b, nullptr});
@@ -379,28 +382,62 @@ void finishScan(Gate &g, bool ok, const String &l1, const String &l2, bool open)
 
 /// Không có ĐT / ĐT không trả lời: cư dân (thẻ tháng trong danh sách đã lưu) vẫn qua, ghi nhật ký để gửi bù.
 void offlineScan(Gate &g, const String &uid) {
-  if (!wlAllows(uid)) return finishScan(g, false, "TU CHOI", "Mat mang - goi BV", false);
+  // Còn MQTT mà vẫn offline = ĐT camera của cổng không chạy (màn hình tắt, thoát app), không phải mất mạng.
+  if (!wlAllows(uid)) return finishScan(g, false, "TU CHOI", mqtt.connected() ? "Chua co DT cong" : "Mat mang - goi BV", false);
   logOffline(g.name, uid, "card");
   finishScan(g, true, "CU DAN", "Offline - moi qua", true);
 }
 
+String toHex(const byte *b, byte n) {
+  String s;
+  for (byte i = 0; i < n; i++) {
+    char hex[3];
+    snprintf(hex, sizeof hex, "%02X", b[i]);
+    s += hex;
+  }
+  return s;
+}
+
+const byte TOKEN_BLOCK = 4;  // sector 1, block đầu: chứa mã xoay vòng 16 byte
+
+/// Mã xoay vòng chống sao chép thẻ: đọc mã cũ rồi ghi mã ngẫu nhiên mới, API so mã cũ với mã nó đang lưu.
+/// false = thẻ không đọc / ghi được (không phải MIFARE Classic, rút thẻ quá nhanh): gửi không kèm mã, API bỏ qua.
+/// ponytail: khoá A mặc định FF..FF của thẻ mới; muốn chặn cả đọc trộm mã thì đổi khoá sector 1 lúc cấp thẻ.
+bool rollToken(Gate &g, String &oldHex, String &newHex) {
+  MFRC522::MIFARE_Key key;
+  memset(key.keyByte, 0xFF, sizeof key.keyByte);
+  byte buf[18], size = sizeof buf, next[16];
+  esp_fill_random(next, sizeof next);
+  bool ok = g.rfid.PCD_Authenticate(MFRC522Constants::PICC_CMD_MF_AUTH_KEY_A, TOKEN_BLOCK, &key, &g.rfid.uid) ==
+                MFRC522::StatusCode::STATUS_OK &&
+            g.rfid.MIFARE_Read(TOKEN_BLOCK, buf, &size) == MFRC522::StatusCode::STATUS_OK &&
+            g.rfid.MIFARE_Write(TOKEN_BLOCK, next, sizeof next) == MFRC522::StatusCode::STATUS_OK;
+  g.rfid.PCD_StopCrypto1();
+  if (ok) {
+    oldHex = toHex(buf, 16);
+    newHex = toHex(next, 16);
+  }
+  return ok;
+}
+
 void readCard(Gate &g) {
   if (g.pendingId || !g.rfid.PICC_IsNewCardPresent() || !g.rfid.PICC_ReadCardSerial()) return;
-  String uid;
-  for (byte i = 0; i < g.rfid.uid.size; i++) {
-    char hex[3];
-    snprintf(hex, sizeof hex, "%02X", g.rfid.uid.uidByte[i]);
-    uid += hex;
-  }
-  g.rfid.PICC_HaltA();
+  String uid = toHex(g.rfid.uid.uidByte, g.rfid.uid.size);
   Serial.printf("[rfid] cong %s doc the %s\n", g.name, uid.c_str());
-  if (uid == g.lastUid && millis() - g.lastUidAt < SAME_CARD_DEBOUNCE_MS) return;
+  if (uid == g.lastUid && millis() - g.lastUidAt < SAME_CARD_DEBOUNCE_MS) {
+    g.rfid.PICC_HaltA();
+    return;
+  }
   g.lastUid = uid;
   g.lastUidAt = millis();
   if (!phoneConnected(g.name)) {
+    g.rfid.PICC_HaltA();  // offline không xoay mã: API không nhận được mã mới thì thẻ thật bị báo nhầm là thẻ chép
     Serial.printf("[rfid] khong co DT phu trach cong %s -> che do offline\n", g.name);
     return offlineScan(g, uid);
   }
+  String tok, ntok;
+  bool rolled = rollToken(g, tok, ntok);
+  g.rfid.PICC_HaltA();
 
   g.pendingId = nextId++;
   g.pendingUid = uid;
@@ -411,6 +448,10 @@ void readCard(Gate &g) {
   ev["g"] = g.name;
   ev["uid"] = uid;
   ev["id"] = g.pendingId;
+  if (rolled) {
+    ev["tok"] = tok;
+    ev["ntok"] = ntok;
+  }
   notify(ev);
 }
 
@@ -704,8 +745,8 @@ void setup() {
   if (!keypad.begin()) Serial.println("PCF8574 loi");
   keypad.loadKeyMap((char *)KEYMAP);
 
-  SPI.begin(RFID_IN_SCK, RFID_IN_MISO, RFID_IN_MOSI);
-  hspi.begin(RFID_OUT_SCK, RFID_OUT_MISO, RFID_OUT_MOSI);
+  hspi.begin(RFID_IN_SCK, RFID_IN_MISO, RFID_IN_MOSI);
+  SPI.begin(RFID_OUT_SCK, RFID_OUT_MISO, RFID_OUT_MOSI);
   initRfid(rfidIn, RFID_IN_RST);
   initRfid(rfidOut, RFID_OUT_RST);
 

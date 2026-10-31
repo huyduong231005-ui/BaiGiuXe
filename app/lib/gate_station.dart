@@ -92,12 +92,14 @@ class GateStation {
   final EspLink link;
   ValueNotifier<String> get status => link.status;
   final last = ValueNotifier<String>('Chua co xe');
+  Timer? _lastTimer; // dòng kết quả tự ẩn sau [lastFor]: không đứng mãi che camera
+  static const lastFor = Duration(seconds: 5);
   final busy = ValueNotifier<bool>(false); // true trong lúc xử lý một lượt quẹt thẻ
   final history = ValueNotifier<List<ScanResult>>(const []); // mới nhất trước, để bảo vệ xem lại khi xe xếp hàng
 
-  /// Chỉ đường cho xe vừa vào: mặt bằng (không biển số) + đường từ cổng tới ô API vừa chỉ. Tự ẩn sau [guideFor].
-  final guide = ValueNotifier<({Rec map, Rec route})?>(null);
-  static const guideFor = Duration(seconds: 40);
+  /// Chỉ dẫn cho xe vừa vào (route API trả: slot, hint): chữ gọn trên camera, tự ẩn sau [guideFor] để quét xe kế tiếp.
+  final guide = ValueNotifier<Rec?>(null);
+  static const guideFor = Duration(seconds: 3);
   Timer? _guideTimer;
 
   void _addHistory(String g, String? plate, bool ok, String msg) =>
@@ -112,6 +114,10 @@ class GateStation {
   ({String uid, String? plate, String path, DateTime at})? _lastDenied;
 
   void start() {
+    last.addListener(() {
+      _lastTimer?.cancel();
+      if (last.value.isNotEmpty) _lastTimer = Timer(lastFor, () => last.value = '');
+    });
     link.onConnected = _syncEsp;
     // Mọi điện thoại đều nhận mọi bản tin; mỗi cổng chỉ xử lý bản tin có g == cổng của mình.
     _sub = link.events
@@ -163,6 +169,7 @@ class GateStation {
     _wlTimer?.cancel();
     _flushTimer?.cancel();
     _guideTimer?.cancel();
+    _lastTimer?.cancel();
     await link.stop();
   }
 
@@ -218,6 +225,7 @@ class GateStation {
   }
 
   Future<void> _scanGuarded(Rec ev) async {
+    hideGuide(); // xe mới: bỏ chỉ dẫn của xe trước
     busy.value = true;
     try {
       await _scan(ev);
@@ -283,6 +291,7 @@ class GateStation {
         'candidates': read?.candidates ?? const <String>[],
         'vehicle': read?.vehicle,
         'img': path,
+        'tok': ev['tok'], 'ntok': ev['ntok'], // mã xoay vòng chống sao chép thẻ (ESP32 vừa ghi ntok vào thẻ)
         'shots': shots,
         'ocrMs': tOcr - tShot,
         'totalMs': sw.elapsedMilliseconds, // tới lúc gửi API; phần còn lại là API + MQTT (~0,3s)
@@ -297,7 +306,7 @@ class GateStation {
     final tReply = sw.elapsedMilliseconds;
     if (!ok && g == 'out') _lastDenied = (uid: uid, plate: plate, path: path, at: now);
     _addHistory(g, plate, ok, message);
-    if (ok && r['route'] != null) unawaited(_showGuide(r['route'] as Rec));
+    if (ok && r['route'] != null) _showGuide(r['route'] as Rec);
     last.value = '${ok ? 'OK' : 'TU CHOI'} | the $uid | ${plate ?? '?'} | $message'
         '\nchup ${tShot}ms · OCR ${tOcr - tShot}ms · tra loi ESP32 sau ${tReply}ms';
     // Đọc được qua `adb logcat -s flutter` để đo tốc độ mà không cần nhìn màn hình.
@@ -370,12 +379,16 @@ class GateStation {
     }
   }
 
-  Future<void> _showGuide(Rec route) async {
-    try {
-      guide.value = (map: await api.get('/lot/map/public') as Rec, route: route);
-      _guideTimer?.cancel();
-      _guideTimer = Timer(guideFor, () => guide.value = null);
-    } catch (_) {} // không lấy được mặt bằng thì chỉ hiện mã ô như cũ
+  void _showGuide(Rec route) {
+    guide.value = route;
+    _guideTimer?.cancel();
+    _guideTimer = Timer(guideFor, hideGuide);
+  }
+
+  /// Ẩn chỉ dẫn (hết giờ, chạm vào, hoặc có lượt quẹt mới) để camera nhìn được xe kế tiếp.
+  void hideGuide() {
+    _guideTimer?.cancel();
+    guide.value = null;
   }
 
   /// Mất mạng tới API: thẻ tháng còn hạn (danh sách đã lưu) thì cho qua và xếp hàng chờ gửi bù; thẻ khác từ chối.

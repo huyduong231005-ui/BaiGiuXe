@@ -45,6 +45,24 @@ void main() {
     expect([last['kind'], last['status'], last['uid']], ['scan', 'denied', 'A1B2C3D4']);
   });
 
+  test('mã xoay vòng: thẻ nhận mã đầu, mã khớp thì xoay tiếp, thẻ chép mang mã cũ bị từ chối và khoá thẻ', () async {
+    String t(String c) => c * 32;
+    await ctx.call('POST', '/cards', token: token, body: {'uid': 'C1C2C3C4'});
+    Future<Map> go(String gate, String? tok, String ntok) async => (await scan(
+        {'gate': gate, 'uid': 'C1C2C3C4', 'plate': '51F12345', 'score': 0.95, 'tok': tok, 'ntok': ntok})).body;
+
+    expect((await go('in', t('0'), t('A')))['ok'], true); // thẻ chưa có mã: nhận mã A
+    expect((await go('out', t('A'), t('B')))['ok'], true); // đúng mã A -> xoay sang B
+    // Thẻ chép từ lúc thẻ còn mã A (thẻ thật đã sang B)
+    final clone = await go('in', t('A'), t('C'));
+    expect([clone['ok'], clone['l2']], [false, 'The nghi sao chep']);
+    final card = ((await ctx.call('GET', '/cards?q=C1C2', token: token)).body as List).first;
+    expect([card['active'], card.containsKey('tok')], [false, false]); // khoá thẻ, không lộ mã ra API
+    // Không gửi mã (quẹt thử, NFC, ESP32 bản cũ): không kiểm tra
+    expect((await scan({'gate': 'in', 'uid': 'C1C2C3C4', 'plate': '51F12345', 'score': 0.95})).body['message'],
+        isNot('The nghi sao chep'));
+  });
+
   test('bảo vệ mở tay: sai PIN bị từ chối, đúng PIN đóng lượt bị từ chối gần đây kèm tên bảo vệ', () async {
     expect((await ctx.call('POST', '/gate/auth', token: token, body: {'pin': '0000'})).body['ok'], false);
     final enroll = (await ctx.call('POST', '/gate/auth', token: token, body: {'pin': '2468', 'enroll': true})).body;
