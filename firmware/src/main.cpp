@@ -147,6 +147,10 @@ void initMqtt() {
   WiFi.mode(WIFI_STA);
   WiFi.setSleep(false);  // tắt modem sleep: bớt ~100ms trễ mỗi bản tin
   WiFi.begin(WIFI_SSID, WIFI_PASS);  // tự kết nối lại khi rớt WiFi
+  // Phát WiFi công suất mặc định (~20 dBm) kéo dòng từng xung làm nhiễu nguồn 3,3V: RC522 cổng ra (xa nguồn hơn)
+  // không bắt được thẻ dù hwtest (không WiFi) đọc tốt. 8,5 dBm đã đo là cổng ra đọc tốt; 11 dBm cho WiFi khoẻ hơn.
+  // Cổng ra lại không nhận thẻ thì hạ về WIFI_POWER_8_5dBm, hoặc thêm tụ / nguồn 3,3V riêng cho RC522.
+  WiFi.setTxPower(WIFI_POWER_11dBm);
   net.setCACert(CA_ROOTS);
   net.setHandshakeTimeout(5);
   mqtt.setServer(MQTT_HOST, 8883);
@@ -426,6 +430,7 @@ void healRfid(Gate &g, MFRC522Driver &d) {
   Serial.printf("[rfid] dau doc %s bi reset (sut ap?) TxControl 0x%02X TMode 0x%02X - khoi tao lai (lan %lu)\n",
                 g.name, d.PCD_ReadRegister(R::TxControlReg), d.PCD_ReadRegister(R::TModeReg), ++g.resets);
   g.rfid.PCD_Init();
+  g.rfid.PCD_SetAntennaGain(MFRC522::PCD_RxGain::RxGain_max);  // PCD_Init đặt lại độ nhạy mặc định
 }
 
 void checkRfidHealth() {
@@ -678,6 +683,7 @@ void initRfid(MFRC522 &r, int rstPin) {
   pinMode(rstPin, OUTPUT);
   digitalWrite(rstPin, HIGH);  // driver v2 không tự điều khiển RST
   r.PCD_Init();
+  r.PCD_SetAntennaGain(MFRC522::PCD_RxGain::RxGain_max);  // 48 dB: bắt thẻ chắc hơn khi nguồn nhiễu
 }
 
 void setup() {
