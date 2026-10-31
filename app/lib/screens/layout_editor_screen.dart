@@ -167,7 +167,6 @@ class _LayoutEditorScreenState extends State<LayoutEditorScreen> {
   @override
   Widget build(BuildContext context) {
     final s = Theme.of(context).colorScheme;
-    final t = Theme.of(context).textTheme;
     final zoneType = {for (final z in zones) z['name'] as String: z['vehicle_type'] as String};
     final brushes = <(String, String, Color)>[
       ('=', 'Đường 2 chiều', LotPainter.asphalt),
@@ -191,9 +190,6 @@ class _LayoutEditorScreenState extends State<LayoutEditorScreen> {
       body: SafeArea(
         top: false,
         child: ListView(padding: const EdgeInsets.all(12), children: [
-          Text('Chọn cọ rồi chạm hoặc kéo ngón tay trên lưới. Ô đậu vẽ bằng chữ của khu, phải nằm sát đường đi; '
-              'cần ít nhất 1 lối vào và 1 lối ra ở mép bãi. Đường 1 chiều: xe chỉ chạy theo mũi tên, chỉ đường cũng theo mũi tên.', style: t.bodySmall),
-          const SizedBox(height: 8),
           Wrap(spacing: 6, runSpacing: 6, children: [
             for (final (ch, label, color) in brushes)
               GestureDetector(
@@ -207,8 +203,6 @@ class _LayoutEditorScreenState extends State<LayoutEditorScreen> {
               ),
             ActionChip(avatar: const Icon(Icons.add, size: 18), label: const Text('Thêm khu'), onPressed: _addZone),
           ]),
-          const SizedBox(height: 4),
-          Text('Nhấn giữ một khu để xoá khu.', style: t.labelSmall?.copyWith(color: s.onSurfaceVariant)),
           const SizedBox(height: 10),
           LayoutBuilder(builder: (context, box) {
             final cell = box.maxWidth / grid[0].length;

@@ -38,24 +38,42 @@ Future<void> main() async {
   runApp(const App());
 }
 
-ThemeData _theme(Brightness b) {
-  final s = ColorScheme.fromSeed(seedColor: const Color(0xFF00796B), brightness: b);
+/// Nền trắng, chữ gần đen, viền xám rõ: tương phản cao, dễ nhìn ngoài trời ở cổng.
+ThemeData _theme() {
+  final s = ColorScheme.fromSeed(seedColor: const Color(0xFF00796B)).copyWith(
+    surface: Colors.white,
+    onSurface: const Color(0xFF111111),
+    onSurfaceVariant: const Color(0xFF3C3C3C),
+    outline: const Color(0xFF8A8A8A),
+    outlineVariant: const Color(0xFFD0D0D0),
+  );
   final r12 = BorderRadius.circular(12);
+  final border = OutlineInputBorder(borderRadius: r12, borderSide: BorderSide(color: s.outline));
   return ThemeData(
     colorScheme: s,
     useMaterial3: true,
-    appBarTheme: AppBarTheme(centerTitle: true, backgroundColor: s.surface, scrolledUnderElevation: 1),
+    scaffoldBackgroundColor: Colors.white,
+    appBarTheme: const AppBarTheme(
+      centerTitle: true,
+      backgroundColor: Colors.white,
+      foregroundColor: Color(0xFF111111),
+      surfaceTintColor: Colors.transparent,
+      scrolledUnderElevation: 1,
+    ),
+    navigationBarTheme: NavigationBarThemeData(backgroundColor: Colors.white, indicatorColor: s.primaryContainer),
     cardTheme: CardThemeData(
       elevation: 0,
-      color: s.surfaceContainerLow,
+      color: Colors.white,
       margin: const EdgeInsets.symmetric(vertical: 4),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14), side: BorderSide(color: s.outlineVariant)),
       clipBehavior: Clip.antiAlias,
     ),
+    dividerTheme: DividerThemeData(color: s.outlineVariant),
     inputDecorationTheme: InputDecorationTheme(
       filled: true,
-      fillColor: s.surfaceContainerHighest.withValues(alpha: 0.5),
-      border: OutlineInputBorder(borderRadius: r12, borderSide: BorderSide.none),
+      fillColor: Colors.white,
+      border: border,
+      enabledBorder: border,
       focusedBorder: OutlineInputBorder(borderRadius: r12, borderSide: BorderSide(color: s.primary, width: 2)),
     ),
     filledButtonTheme: FilledButtonThemeData(
@@ -79,8 +97,8 @@ class App extends StatelessWidget {
   Widget build(BuildContext context) => MaterialApp(
         navigatorKey: navigatorKey,
         title: 'Bãi giữ xe',
-        theme: _theme(Brightness.light),
-        darkTheme: _theme(Brightness.dark),
+        theme: _theme(),
+        themeMode: ThemeMode.light, // luôn nền trắng, kể cả máy đang bật chế độ tối
         // Mọi thứ qua REST API. ĐT gắn ở cổng đăng nhập tài khoản quản lý ở chế độ "Thiết bị camera"
         // rồi chọn vai trò của máy (camera cổng vào / ra / cả 2, hoặc quản lý).
         home: ValueListenableBuilder<ApiUser?>(

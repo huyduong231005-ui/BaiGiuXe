@@ -362,7 +362,7 @@ class _TicketQrState extends State<_TicketQr> {
             else
               SizedBox(height: 240, child: Center(child: error != null ? Text(error!) : const CircularProgressIndicator())),
             const SizedBox(height: 8),
-            const Text('Đưa mã cho bảo vệ / quản lý quét. Mã tự đổi sau mỗi 10 phút.', textAlign: TextAlign.center),
+            const Text('Đưa mã cho bảo vệ quét', textAlign: TextAlign.center),
           ]),
         ),
         actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('Đóng'))],
@@ -584,7 +584,7 @@ class _RequestFormState extends State<RequestForm> {
               controller: plate,
               enabled: !renew,
               textCapitalization: TextCapitalization.characters,
-              decoration: const InputDecoration(labelText: 'Biển số xe', prefixIcon: Icon(Icons.pin_outlined), helperText: 'VD: 59X1-123.45'),
+              decoration: const InputDecoration(labelText: 'Biển số xe', prefixIcon: Icon(Icons.pin_outlined), hintText: '59X1-123.45'),
             ),
             fieldGap,
             TextField(
@@ -596,7 +596,7 @@ class _RequestFormState extends State<RequestForm> {
             TextField(
               controller: apartment,
               textCapitalization: TextCapitalization.characters,
-              decoration: const InputDecoration(labelText: 'Căn hộ', prefixIcon: Icon(Icons.apartment), helperText: 'VD: A1-12.05'),
+              decoration: const InputDecoration(labelText: 'Căn hộ', prefixIcon: Icon(Icons.apartment), hintText: 'A1-12.05'),
             ),
             fieldGap,
             DropdownButtonFormField<String>(

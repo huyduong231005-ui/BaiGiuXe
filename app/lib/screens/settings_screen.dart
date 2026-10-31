@@ -256,7 +256,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
         decoration: const InputDecoration(
           labelText: 'Toạ độ (vĩ độ, kinh độ)',
           prefixIcon: Icon(Icons.my_location),
-          helperText: 'Google Maps: nhấn giữ vị trí bãi, chép dãy số hiện ra',
         ),
       ),
       const SizedBox(height: 12),

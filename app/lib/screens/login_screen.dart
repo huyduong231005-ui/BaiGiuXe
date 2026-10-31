@@ -62,7 +62,6 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   Widget build(BuildContext context) {
     final s = Theme.of(context).colorScheme;
-    final t = Theme.of(context).textTheme;
     return _AuthScaffold(
       icon: Icons.local_parking,
       title: 'Bãi giữ xe',
@@ -114,8 +113,6 @@ class _LoginScreenState extends State<LoginScreen> {
               onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const RegisterScreen())),
               child: const Text('Chưa có tài khoản? Đăng ký'),
             ),
-            Text('Lần đầu mở có thể chờ ~50 giây để máy chủ thức dậy.',
-                textAlign: TextAlign.center, style: t.bodySmall?.copyWith(color: s.onSurfaceVariant)),
           ],
         ]),
       ),

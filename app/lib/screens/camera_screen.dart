@@ -8,7 +8,6 @@ import '../api.dart';
 import '../esp_link.dart';
 import '../gate_station.dart';
 import '../logic.dart';
-import '../lot.dart';
 import '../main.dart' show ManagerHome, prefs;
 
 /// Render free ngủ sau 15 phút không có request; ping định kỳ để lượt quẹt thẻ không phải chờ API thức dậy.
@@ -33,7 +32,7 @@ class CameraScreen extends StatefulWidget {
 }
 
 class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver {
-  static const historyShown = 4;
+  static const historyShown = 2; // ít dòng: không che khung hình camera
 
   CameraController? cam;
   GateStation? station;
@@ -148,10 +147,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
           child: ConstrainedBox(
             constraints: BoxConstraints(maxHeight: MediaQuery.of(c).size.height * 0.7),
             child: ListView(shrinkWrap: true, children: [
-              const ListTile(
-                title: Text('Quẹt thử', style: TextStyle(fontWeight: FontWeight.w600)),
-                subtitle: Text('Hướng camera vào biển số rồi chọn thẻ: app chụp, đọc biển, gọi API như lượt quẹt thật.'),
-              ),
+              const ListTile(title: Text('Quẹt thử', style: TextStyle(fontWeight: FontWeight.w600))),
               if (widget.gate == 'both')
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -225,7 +221,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                     ),
                   ),
                 ),
-                // Chỉ đường cho xe vừa vào: mặt bằng + đường từ cổng tới ô, chữ to để tài xế / bảo vệ đọc.
+                // Chỉ dẫn gọn cho xe vừa vào (ô + 1 dòng), tự ẩn sau 3s / chạm để ẩn: không che camera cho xe kế tiếp.
                 Align(
                   alignment: Alignment.topCenter,
                   child: Padding(
@@ -234,23 +230,20 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                       valueListenable: station!.guide,
                       builder: (_, g, _) => g == null
                           ? const SizedBox.shrink()
-                          : Card(
-                              margin: const EdgeInsets.symmetric(horizontal: 8),
-                              color: Colors.black.withValues(alpha: 0.82),
-                              child: Padding(
-                                padding: const EdgeInsets.all(10),
-                                child: Column(mainAxisSize: MainAxisSize.min, children: [
-                                  Text('Mời vào ô ${g.route['slot']}',
-                                      style: const TextStyle(color: Colors.yellowAccent, fontSize: 26, fontWeight: FontWeight.bold)),
-                                  Text(g.route['hint'] as String, textAlign: TextAlign.center,
-                                      style: const TextStyle(color: Colors.white, fontSize: 15)),
-                                  const SizedBox(height: 8),
-                                  LotPlanView(g.map,
-                                      route: cellsFrom(g.route['path']),
-                                      highlight: g.route['slot'] as String?,
-                                      zoomable: false,
-                                      maxHeight: MediaQuery.of(context).size.height * 0.28),
-                                ]),
+                          : GestureDetector(
+                              onTap: station!.hideGuide,
+                              child: Card(
+                                margin: const EdgeInsets.symmetric(horizontal: 8),
+                                color: Colors.black.withValues(alpha: 0.75),
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                  child: Column(mainAxisSize: MainAxisSize.min, children: [
+                                    Text('Mời vào ô ${g['slot']}',
+                                        style: const TextStyle(color: Colors.yellowAccent, fontSize: 24, fontWeight: FontWeight.bold)),
+                                    Text(g['hint'] as String, textAlign: TextAlign.center, maxLines: 2,
+                                        style: const TextStyle(color: Colors.white, fontSize: 14)),
+                                  ]),
+                                ),
                               ),
                             ),
                     ),
@@ -327,7 +320,7 @@ class _Banner extends StatelessWidget {
   @override
   Widget build(BuildContext context) => ValueListenableBuilder(
     valueListenable: text,
-    builder: (_, v, _) => Container(
+    builder: (_, v, _) => v.isEmpty ? const SizedBox.shrink() : Container(
       width: double.infinity,
       color: Colors.black54,
       padding: const EdgeInsets.all(12),

@@ -78,7 +78,6 @@ class _GuardsScreenState extends State<GuardsScreen> {
               decoration: const InputDecoration(
                 labelText: 'ID vân tay (1-300)',
                 prefixIcon: Icon(Icons.fingerprint),
-                helperText: 'Tự điền khi đăng ký ở ESP32, thường để trống',
               ),
               keyboardType: TextInputType.number,
             ),
@@ -160,9 +159,6 @@ class _GuardsScreenState extends State<GuardsScreen> {
                 const Text('Chấm công vào/ra ca: C → đặt vân tay, hoặc nhập PIN → #.'),
                 const Text('Đăng ký vân tay: B → PIN của bảo vệ → #, đặt ngón tay, nhấc ra, đặt lại.'),
                 const Text('Khi đang nhập PIN: C xoá 1 số · * xoá hết · D huỷ.'),
-                const SizedBox(height: 4),
-                Text('Đăng ký cần ĐT cổng ra đang mở app. Kéo xuống để làm mới sau khi đăng ký.',
-                    style: t.bodySmall?.copyWith(color: s.onSecondaryContainer)),
               ]),
             ),
           ),
