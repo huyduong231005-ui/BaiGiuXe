@@ -21,7 +21,9 @@ const int SERVO_CLOSE_DEG = 0;
 
 SPIClass hspi(HSPI);
 MFRC522DriverPinSimple ssIn(RFID_IN_SS), ssOut(RFID_OUT_SS);
-MFRC522DriverSPI drvIn{ssIn, SPI}, drvOut{ssOut, hspi};
+// Cổng vào dùng HSPI, cổng ra dùng VSPI: cổng vào trên VSPI đọc được nhưng không ghi được (thay dây, đổi chân MOSI,
+// đổi chéo module đều không hết), đổi bộ SPI thì cả 2 cổng ghi/đọc OK. Giữ giống main.cpp.
+MFRC522DriverSPI drvIn{ssIn, hspi}, drvOut{ssOut, SPI};
 MFRC522 rfidIn{drvIn}, rfidOut{drvOut};
 I2CKeyPad keypad(PCF8574_ADDR);
 Adafruit_SSD1306 oled(128, 64, &Wire, -1);
@@ -284,8 +286,8 @@ void autoTests() {
   check("PCF8574 phim 0x20", keypad.isConnected());
 
   String d;
-  check("RC522 cong vao (VSPI)", rfidOk(drvIn, d), d);
-  check("RC522 cong ra (HSPI)", rfidOk(drvOut, d), d);
+  check("RC522 cong vao (HSPI)", rfidOk(drvIn, d), d);
+  check("RC522 cong ra (VSPI)", rfidOk(drvOut, d), d);
 
   fpOk = finger.verifyPassword();
   if (fpOk) {
@@ -433,8 +435,8 @@ void setup() {
   keypad.begin();
   keypad.loadKeyMap((char *)KEYMAP);
 
-  SPI.begin(RFID_IN_SCK, RFID_IN_MISO, RFID_IN_MOSI);
-  hspi.begin(RFID_OUT_SCK, RFID_OUT_MISO, RFID_OUT_MOSI);
+  hspi.begin(RFID_IN_SCK, RFID_IN_MISO, RFID_IN_MOSI);
+  SPI.begin(RFID_OUT_SCK, RFID_OUT_MISO, RFID_OUT_MOSI);
   for (int p : {RFID_IN_RST, RFID_OUT_RST}) {
     pinMode(p, OUTPUT);
     digitalWrite(p, HIGH);

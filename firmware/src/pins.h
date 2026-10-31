@@ -1,14 +1,14 @@
 #pragma once
 // Bảng chân đã đo trên phần cứng thật bằng firmware hwtest (pio run -e hwtest).
 
-// RC522 cổng vào - bus VSPI (SPI mặc định). MISO dùng chân chỉ-vào 36 (VP). Đã đo bằng hwtest.
+// RC522 cổng vào - bus HSPI (main.cpp / hwtest.cpp). MISO dùng chân chỉ-vào 36 (VP). Đã đo bằng hwtest.
 #define RFID_IN_SS   5
 #define RFID_IN_SCK  18
-#define RFID_IN_MOSI 23
+#define RFID_IN_MOSI 26  // dây thật đang ở D26 (trước là D23)
 #define RFID_IN_MISO 36
 #define RFID_IN_RST  4
 
-// RC522 cổng ra - bus HSPI. Đã đo bằng hwtest lệnh 'p' (dò chân tự động).
+// RC522 cổng ra - bus VSPI (SPI mặc định). Đã đo bằng hwtest lệnh 'p' (dò chân tự động).
 #define RFID_OUT_SS   27
 #define RFID_OUT_SCK  14
 #define RFID_OUT_MOSI 32
